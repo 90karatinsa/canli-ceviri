@@ -22,8 +22,8 @@ android {
         applicationId = "com.alterra.canliceviri"
         minSdk = 26
         targetSdk = 36
-        versionCode = 5
-        versionName = "0.5.0"
+        versionCode = 6
+        versionName = "0.6.0"
 
         // Sorun bildiriminin gideceği WhatsApp numarası (ülke koduyla, + olmadan); local.properties'te `rapor.whatsapp=905…`.
         buildConfigField("String", "RAPOR_WHATSAPP", "\"${localProperty("rapor.whatsapp")}\"")

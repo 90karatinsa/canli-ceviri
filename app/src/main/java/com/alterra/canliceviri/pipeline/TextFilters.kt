@@ -27,6 +27,16 @@ object TextFilters {
         "legendas pela comunidade amaraorg", "obrigado por assistir", "obrigado",
         "terima kasih telah menonton", "terima kasih",
         "धन्यवाद", "ধন্যবাদ",
+        // Almanca, İtalyanca, Hollandaca, Lehçe, Çekçe, Ukraynaca, Japonca, Korece
+        "untertitelung des zdf für funk 2017", "untertitel im auftrag des zdf für funk 2017", "untertitel von stephanie geiges",
+        "vielen dank fürs zuschauen", "danke fürs zuschauen", "danke",
+        "grazie per aver guardato", "grazie",
+        "bedankt voor het kijken", "dank je wel", "dankjewel",
+        "dziękuję za uwagę", "dziękuję za oglądanie", "dziękuję",
+        "titulky vytvořil johnyx", "děkuji za zhlédnutí", "děkuji",
+        "дякую за перегляд", "субтитри створив dimatorzok", "дякую",
+        "ご視聴ありがとうございました", "ありがとうございました", "字幕視聴ありがとうございました",
+        "시청해주셔서 감사합니다", "시청해 주셔서 감사합니다", "감사합니다",
     )
 
     fun normalize(text: String, lang: String?): String {

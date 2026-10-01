@@ -78,7 +78,8 @@ class HyMtTranslator private constructor(private var handle: Long, val file: Fil
         val LANGUAGE_NAMES = mapOf(
             "tr" to "Turkish", "en" to "English", "zh" to "Chinese", "hi" to "Hindi", "es" to "Spanish",
             "ar" to "Arabic", "fr" to "French", "bn" to "Bengali", "pt" to "Portuguese", "ru" to "Russian",
-            "id" to "Indonesian",
+            "id" to "Indonesian", "de" to "German", "it" to "Italian", "nl" to "Dutch", "pl" to "Polish",
+            "cs" to "Czech", "uk" to "Ukrainian", "ja" to "Japanese", "ko" to "Korean",
         )
 
         fun load(file: File, threads: Int = 4, nCtx: Int = 1024): HyMtTranslator? {

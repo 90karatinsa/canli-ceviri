@@ -5,7 +5,7 @@ Yurt dışında karşınızdakiyle konuşurken çeviri yapar. İnternet gerekmez
 - Karşınızdaki konuşunca **Türkçesi kulaklıktan** gelir.
 - Siz Türkçe konuşunca **çevirisi telefonun hoparlöründen** okunur ve ekranda büyük yazıyla görünür.
 
-Diller: İngilizce, Çince, Hintçe, İspanyolca, Arapça, Fransızca, Bengalce, Portekizce, Rusça, Endonezce.
+Diller: İngilizce, Çince, Hintçe, İspanyolca, Arapça, Fransızca, Bengalce, Portekizce, Rusça, Endonezce, Almanca, İtalyanca, Hollandaca, Lehçe, Çekçe, Ukraynaca, Japonca, Korece.
 
 ## Kurulum (bir kez, Wi-Fi'de)
 
@@ -57,6 +57,7 @@ Ayarlar'da ayrıca **Okuma hızı: Yavaş** seçeneği var.
 
 ## Önemli
 
+- **Ukraynaca:** Uygulama Ukraynacayı Rusça sanabilir; Ukrayna'da üstteki dil düğmesinden **Ukraynaca**'yı elle seçin.
 - **Bengalce:** Sizin Türkçe konuşmanız Bengalceye çevrilip okunur. Karşı tarafın Bengalce konuşması ise henüz güvenilir anlaşılmıyor; mümkünse İngilizce konuşmasını isteyin. Uygulama Bengalceyi Hintçe sanabilir, üstteki dil düğmesinden **Bengalce**'yi elle seçin.
 - Pasaport, polis, hastane gibi önemli konuşmalarda çeviriyi ekrandaki yazıdan da kontrol edin. Makine çevirisi hata yapabilir.
 - Çeviri telefonun işlemcisini yoğun kullanır; uzun kullanımda pil hızlı biter.
