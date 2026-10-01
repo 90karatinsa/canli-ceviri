@@ -1,11 +1,15 @@
 package com.alterra.canliceviri.ui
 
 import android.app.Application
+import android.content.Context
+import android.os.PowerManager
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.alterra.canliceviri.CanliCeviriApp
+import com.alterra.canliceviri.TranslationService
 import com.alterra.canliceviri.asr.toFloatPcm
 import com.alterra.canliceviri.audio.WavReader
 import com.alterra.canliceviri.llm.HyMtTranslator
@@ -27,6 +31,8 @@ data class SetupState(
     val packProgress: String? = null,
     /** Google'ın ses motoru kurulu değil (Play Store'dan kurulmalı). */
     val googleTtsMissing: Boolean = false,
+    /** Pil optimizasyonu açık: Samsung'da uyuyan uygulama kısıtı ön plan hizmetini öldürebiliyor. */
+    val batteryRestricted: Boolean = false,
     val checked: Boolean = false,
 ) {
     val ready: Boolean get() = checked && missingModels.isEmpty() && missingPacks.isEmpty() && missingVoices.isEmpty()
@@ -34,19 +40,29 @@ data class SetupState(
 
 class ConversationViewModel(app: Application) : AndroidViewModel(app) {
 
-    val engine = ConversationEngine(app, viewModelScope)
+    /** Motor uygulama ömründe ([CanliCeviriApp]); ön plan hizmetiyle paylaşılıyor. */
+    val engine = CanliCeviriApp.of(app).engine
     val status = engine.status
     val utterances = engine.utterances
 
+    val prefs = Prefs(app)
+
     var mode by mutableStateOf(Mode.CONVERSATION); private set
-    var partnerLang by mutableStateOf<String?>(null); private set
+    var partnerLang by mutableStateOf<String?>(prefs.partnerLang); private set
     var setup by mutableStateOf(SetupState()); private set
-    var starting by mutableStateOf(false); private set
+    var batteryAsked by mutableStateOf(prefs.batteryAsked); private set
 
     init {
+        engine.setPartnerLanguage(partnerLang)
         refreshSetup()
     }
 
+    fun markBatteryAsked() {
+        batteryAsked = true
+        prefs.batteryAsked = true
+    }
+
+    /** Başlat/Durdur. Başlatma ön plan hizmetinde olur; yalnızca uygulama ekrandayken çağrılmalı. */
     fun toggle() {
         if (status.value.running) {
             engine.stop()
@@ -56,35 +72,34 @@ class ConversationViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun start() {
-        if (starting) return
-        starting = true
-        viewModelScope.launch {
-            try {
-                engine.start(ConversationEngine.Settings(mode = mode))
-            } finally {
-                starting = false
-            }
+        if (status.value.starting) return
+        try {
+            TranslationService.start(getApplication(), mode)
+        } catch (e: Exception) {
+            // Android 14+: uygulama ekranda değilken mikrofon hizmeti başlatılamaz; izin eksikse de buraya düşer.
+            engine.reportError("Çeviri başlatılamadı: ${e.message ?: e.javaClass.simpleName}")
         }
     }
 
     fun selectMode(m: Mode) {
         if (m == mode) return
         mode = m
-        if (status.value.running) {
-            engine.stop()
-            start()
-        }
+        // Hizmet yeni modla yeniden başlatır (motor önce kendini durdurur).
+        if (status.value.running) start()
     }
 
     fun selectPartnerLang(code: String?) {
         partnerLang = code
+        prefs.partnerLang = code
         engine.setPartnerLanguage(code)
     }
 
     fun clear() = engine.clearConversation()
 
     fun refreshSetup() {
-        setup = setup.copy(missingModels = engine.missingModels(), missingPacks = emptyList(), checked = true)
+        val pm = getApplication<Application>().getSystemService(Context.POWER_SERVICE) as PowerManager
+        val restricted = !pm.isIgnoringBatteryOptimizations(getApplication<Application>().packageName)
+        setup = setup.copy(missingModels = engine.missingModels(), missingPacks = emptyList(), batteryRestricted = restricted, checked = true)
         viewModelScope.launch {
             val missing = engine.voiceStatuses()
                 .filter { it.state != com.alterra.canliceviri.audio.TtsEngine.State.READY }
@@ -140,10 +155,6 @@ class ConversationViewModel(app: Application) : AndroidViewModel(app) {
             if (clips.isEmpty()) return@launch
             engine.simulate(clips, ConversationEngine.Settings(mode = mode), dual)
         }
-    }
-
-    override fun onCleared() {
-        engine.release()
     }
 
     /** İndirir; bağlantı koparsa bir sonraki denemede kaldığı yerden devam eder (.part dosyası + Range). */

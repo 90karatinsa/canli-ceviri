@@ -62,6 +62,8 @@ fun ConversationScreen(
     onOpenDiagnostics: () -> Unit,
     onInstallVoices: (String?) -> Unit,
     onInstallGoogleTts: () -> Unit,
+    onStart: () -> Unit,
+    onFixBattery: () -> Unit,
 ) {
     val status by vm.status.collectAsState()
     val utterances by vm.utterances.collectAsState()
@@ -80,9 +82,10 @@ fun ConversationScreen(
             }
             Controls(vm, status)
             if (!vm.setup.ready) SetupCard(vm, onInstallVoices, onInstallGoogleTts)
+            if (vm.setup.ready && vm.setup.batteryRestricted && !vm.batteryAsked) BatteryCard(onFixBattery)
             StatusBar(status)
             Conversation(utterances, Modifier.weight(1f))
-            BigButton(vm, status)
+            BigButton(vm, status, onStart)
         }
     }
 }
@@ -148,6 +151,20 @@ private fun SetupCard(vm: ConversationViewModel, onInstallVoices: (String?) -> U
                 OutlinedButton(onClick = { onInstallVoices(vm.ttsEnginePackage) }) { Text("Ses paketlerini indir") }
             }
             TextButton(onClick = vm::refreshSetup) { Text("Yeniden kontrol et") }
+        }
+    }
+}
+
+@Composable
+private fun BatteryCard(onFixBattery: () -> Unit) {
+    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("Pil kısıtlaması", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text(
+                "Ekran kapalıyken çevirinin durmaması için telefonun bu uygulamayı uyutmaması gerekir. Açılan pencerede izin verin.",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Button(onClick = onFixBattery) { Text("Kısıtlamayı kaldır") }
         }
     }
 }
@@ -285,18 +302,18 @@ private fun Bubble(u: Utterance) {
 }
 
 @Composable
-private fun BigButton(vm: ConversationViewModel, status: EngineStatus) {
+private fun BigButton(vm: ConversationViewModel, status: EngineStatus, onStart: () -> Unit) {
     val running = status.running
     Button(
-        onClick = vm::toggle,
-        enabled = !vm.starting && (running || vm.setup.missingModels.isEmpty()),
+        onClick = { if (running) vm.toggle() else onStart() },
+        enabled = !status.starting && (running || vm.setup.missingModels.isEmpty()),
         modifier = Modifier
             .fillMaxWidth()
             .height(64.dp),
         shape = RoundedCornerShape(32.dp),
         colors = if (running) ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error) else ButtonDefaults.buttonColors(),
     ) {
-        if (vm.starting) {
+        if (status.starting) {
             CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp, color = Color.White)
             Spacer(Modifier.width(10.dp))
             Text("Hazırlanıyor…", style = MaterialTheme.typography.titleMedium)

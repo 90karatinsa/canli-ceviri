@@ -3,6 +3,8 @@ package com.alterra.canliceviri.pipeline
 import android.content.Context
 import android.content.pm.PackageManager
 import android.media.AudioDeviceInfo
+import android.os.Build
+import android.os.PowerManager
 import android.util.Log
 import com.alterra.canliceviri.Lang
 import com.alterra.canliceviri.Languages
@@ -24,8 +26,11 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.coroutines.resume
 import kotlin.math.max
 
@@ -74,6 +79,15 @@ class ConversationEngine(private val context: Context, private val scope: Corout
     private val jobs = ArrayList<Job>()
     private val worker = Dispatchers.Default.limitedParallelism(1)
 
+    /** Başlat/durdur/duraklat tek tek işlensin: etkinlik ve hizmet aynı anda çağırabiliyor. */
+    private val lifecycle = Mutex()
+
+    /** Giriş çerçevesi sayacı; ekran kapalıyken mikrofonun aktığını günlükten görmek için. */
+    private val framesIn = AtomicLong(0)
+
+    /** Whisper için iş parçacığı sayısı; telefon ısınınca ([thermal]) yarıya iner. */
+    @Volatile private var threadsNow = Settings().threads
+
     /** Hoparlörden çeviri çalarken ve hemen sonrasında giriş yok sayılır. */
     @Volatile private var speakerPlaying = false
     @Volatile private var gateUntil = 0L
@@ -84,6 +98,20 @@ class ConversationEngine(private val context: Context, private val scope: Corout
 
     private var settings = Settings()
     private var nextId = 1L
+
+    init {
+        if (Build.VERSION.SDK_INT >= 29) {
+            val pm = context.getSystemService(Context.POWER_SERVICE) as PowerManager
+            pm.addThermalStatusListener(context.mainExecutor) { status ->
+                val hot = status >= PowerManager.THERMAL_STATUS_SEVERE
+                val next = if (hot) max(2, settings.threads / 2) else settings.threads
+                if (next != threadsNow) {
+                    threadsNow = next
+                    Log.w(TAG, "ısı durumu $status: whisper iş parçacığı $next")
+                }
+            }
+        }
+    }
 
     // Çift mikrofonda kim konuştu: (kulaklık − telefon) seviye farkının iki kümesi, zamanla uyarlanıyor.
     private var userMeanDb = 12f
@@ -139,21 +167,39 @@ class ConversationEngine(private val context: Context, private val scope: Corout
         _utterances.value = emptyList()
     }
 
-    /** Engeller: model yükleme ve mikrofon açma sürer; Dispatchers.Default'ta çağrılıyor. */
+    /** Dışarıdan (ör. hizmet başlatılamadı) hata metni göster. */
+    fun reportError(message: String) {
+        Log.w(TAG, message)
+        _status.update { it.copy(error = message) }
+    }
+
+    /** Engeller: model yükleme ve mikrofon açma sürer; Dispatchers.Default'ta çağrılıyor. Çalışıyorsa önce durdurur. */
     suspend fun start(newSettings: Settings) = withContext(Dispatchers.Default) {
-        stopInternal()
-        settings = newSettings
-        _status.update { it.copy(error = null) }
-        if (!prepareModels()) return@withContext
+        lifecycle.withLock {
+            stopInternal()
+            settings = newSettings
+            threadsNow = settings.threads
+            _status.update { it.copy(starting = true, error = null) }
+            try {
+                startInternal()
+            } finally {
+                _status.update { it.copy(starting = false) }
+            }
+        }
+    }
+
+    private suspend fun startInternal() {
+        if (!prepareModels()) return
 
         val preferDual = settings.preferDual && settings.mode == Mode.CONVERSATION
         val mode = front.start(preferDual) { frames -> onFrames(frames) }
         if (mode == MicMode.NONE) {
             _status.update { it.copy(running = false, micMode = mode, error = front.info) }
-            return@withContext
+            return
         }
         if (mode == MicMode.DUAL) vadUser = SileroVad.load(File(modelsDir, VAD_MODEL))
         segmenter = Segmenter(vadUser, vadPartner!!, silenceMs = settings.silenceMs)
+        framesIn.set(0)
         launchWorkers()
         _status.update {
             it.copy(
@@ -174,15 +220,20 @@ class ConversationEngine(private val context: Context, private val scope: Corout
      * duyduğu gibi). Her sesten sonra 1,6 sn sessizlik verilir ve çeviri seslendirilip bitene kadar beklenir.
      */
     suspend fun simulate(clips: List<SimClip>, newSettings: Settings, dual: Boolean) = withContext(Dispatchers.Default) {
-        stopInternal()
-        settings = newSettings.copy(preferDual = dual)
-        _status.update { it.copy(error = null) }
-        if (!prepareModels()) return@withContext
-        if (dual) vadUser = SileroVad.load(File(modelsDir, VAD_MODEL))
-        segmenter = Segmenter(vadUser, vadPartner!!, silenceMs = settings.silenceMs)
-        launchWorkers()
-        val mode = if (dual) MicMode.DUAL else MicMode.SINGLE
-        _status.update { it.copy(running = true, micMode = mode, micInfo = "Simülasyon: ${clips.size} test sesi (${if (dual) "çift" else "tek"} mikrofon)") }
+        val ready = lifecycle.withLock {
+            stopInternal()
+            settings = newSettings.copy(preferDual = dual)
+            threadsNow = settings.threads
+            _status.update { it.copy(error = null) }
+            if (!prepareModels()) return@withLock false
+            if (dual) vadUser = SileroVad.load(File(modelsDir, VAD_MODEL))
+            segmenter = Segmenter(vadUser, vadPartner!!, silenceMs = settings.silenceMs)
+            launchWorkers()
+            val mode = if (dual) MicMode.DUAL else MicMode.SINGLE
+            _status.update { it.copy(running = true, micMode = mode, micInfo = "Simülasyon: ${clips.size} test sesi (${if (dual) "çift" else "tek"} mikrofon)") }
+            true
+        }
+        if (!ready) return@withContext
         for (clip in clips) {
             // Test sesleri farklı dillerde; her biri ayrı algılansın.
             if (!manualPartnerLang) unlockPartnerLang()
@@ -197,7 +248,7 @@ class ConversationEngine(private val context: Context, private val scope: Corout
             // Hoparlör sustuktan sonraki yankı payı bitmeden verilen ses kesilir.
             while (System.currentTimeMillis() < gateUntil + 100) delay(50)
         }
-        stopInternal()
+        lifecycle.withLock { stopInternal() }
     }
 
     private suspend fun feed(pcm: ShortArray, dual: Boolean, isUser: Boolean) {
@@ -277,7 +328,7 @@ class ConversationEngine(private val context: Context, private val scope: Corout
     }
 
     fun stop() {
-        scope.launch(Dispatchers.Default) { stopInternal() }
+        scope.launch(Dispatchers.Default) { lifecycle.withLock { stopInternal() } }
     }
 
     private fun stopInternal() {
@@ -308,6 +359,7 @@ class ConversationEngine(private val context: Context, private val scope: Corout
     /** "ses-girisi" iş parçacığında, her 32 ms'de bir. */
     private fun onFrames(f: AudioFrontEnd.Frames) {
         val seg = segmenter ?: return
+        framesIn.incrementAndGet()
         if (speakerPlaying || System.currentTimeMillis() < gateUntil) {
             if (!gated) {
                 seg.reset()
@@ -322,7 +374,10 @@ class ConversationEngine(private val context: Context, private val scope: Corout
 
     /** Arayüz için seviye ve "kim konuşuyor" bilgisini 10 kez/sn günceller. */
     private suspend fun tickStatus() {
+        var tick = 0
         while (true) {
+            // Ekran kapalıyken de mikrofonun aktığı günlükten görülsün (5 sn'de bir).
+            if (++tick % 50 == 0) Log.i(TAG, "giriş: ${framesIn.get()} çerçeve")
             val seg = segmenter
             val lu = front.levelUser
             val lp = front.levelPartner
@@ -372,7 +427,7 @@ class ConversationEngine(private val context: Context, private val scope: Corout
                 else if (partnerLocked && partnerLang != null) listOf("tr", partnerLang!!)
                 else Languages.ALL.map { it.code }
                 val lidPcm = pcmFor(speaker)
-                val guess = w.detectLanguage(lidPcm, candidates, settings.threads, audioCtx = audioCtxFor(lidPcm))
+                val guess = w.detectLanguage(lidPcm, candidates, threadsNow, audioCtx = audioCtxFor(lidPcm))
                 val best = guess?.best
                 if (best == null) {
                     lang = partnerLang ?: "en"
@@ -394,7 +449,7 @@ class ConversationEngine(private val context: Context, private val scope: Corout
             val maxTokens = max(24, (audioMs / 1000f * 15).toInt() + 10)
             val turkish = lang == "tr"
             val r = w.transcribeWithRetry(
-                pcm, lang, settings.threads,
+                pcm, lang, threadsNow,
                 audioCtx = audioCtxFor(pcm),
                 beam = if (turkish) settings.beamTurkish else settings.beamForeign,
                 maxTokens = maxTokens,

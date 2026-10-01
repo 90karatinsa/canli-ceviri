@@ -7,6 +7,7 @@ import android.content.ClipboardManager
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.speech.tts.TextToSpeech
@@ -32,12 +33,17 @@ import com.alterra.canliceviri.diag.DiagnosticsViewModel
 import com.alterra.canliceviri.ui.CanliCeviriTheme
 import com.alterra.canliceviri.ui.ConversationScreen
 import com.alterra.canliceviri.ui.ConversationViewModel
+import com.alterra.canliceviri.ui.Prefs
 import java.io.File
 
 class MainActivity : ComponentActivity() {
 
     private val vm: DiagnosticsViewModel by viewModels()
     private val convo: ConversationViewModel by viewModels()
+    private val prefs by lazy { Prefs(this) }
+
+    /** Başlat'a basıldı ama mikrofon izni yoktu; izin gelince başlat. */
+    private var startAfterPermission = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -47,7 +53,10 @@ class MainActivity : ComponentActivity() {
             CanliCeviriTheme {
                 val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
                     vm.onPermissionResult(granted)
+                    if (granted && startAfterPermission) convo.toggle()
+                    startAfterPermission = false
                 }
+                val notifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
                 LaunchedEffect(Unit) {
                     if (hasMicPermission()) vm.onPermissionResult(true) else permission.launch(Manifest.permission.RECORD_AUDIO)
                 }
@@ -81,6 +90,22 @@ class MainActivity : ComponentActivity() {
                         },
                         onInstallVoices = ::installTtsData,
                         onInstallGoogleTts = ::openGoogleTtsInStore,
+                        onStart = {
+                            // Mikrofon izni şart (ön plan hizmeti onsuz açılmaz); bildirim izni istenir ama şart değil.
+                            if (!hasMicPermission()) {
+                                startAfterPermission = true
+                                requestPermissionOrOpenSettings { permission.launch(Manifest.permission.RECORD_AUDIO) }
+                            } else {
+                                if (Build.VERSION.SDK_INT >= 33 && !prefs.notificationsAsked &&
+                                    ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+                                ) {
+                                    prefs.notificationsAsked = true
+                                    notifications.launch(Manifest.permission.POST_NOTIFICATIONS)
+                                }
+                                convo.toggle()
+                            }
+                        },
+                        onFixBattery = ::requestIgnoreBatteryOptimizations,
                     )
                 }
             }
@@ -161,6 +186,16 @@ class MainActivity : ComponentActivity() {
             .putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
             .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         startActivity(Intent.createChooser(send, "Kayıtları paylaş"))
+    }
+
+    /** Samsung "uyuyan uygulama" kısıtı ön plan hizmetini öldürmesin; sistem penceresi bir kez açılır. */
+    private fun requestIgnoreBatteryOptimizations() {
+        convo.markBatteryAsked()
+        try {
+            startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName")))
+        } catch (_: ActivityNotFoundException) {
+            startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+        }
     }
 
     private fun openTtsSettings() {

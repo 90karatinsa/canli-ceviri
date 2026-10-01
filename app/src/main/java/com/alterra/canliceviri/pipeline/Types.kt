@@ -36,6 +36,10 @@ data class Utterance(
 
 data class EngineStatus(
     val running: Boolean = false,
+    /** Modeller yükleniyor, mikrofon açılıyor (Başlat'a basıldı, henüz dinlemiyor). */
+    val starting: Boolean = false,
+    /** Dinleme geçici olarak durdu (arama vb.); null değilse nedeni. [running] bu sırada true kalır. */
+    val paused: String? = null,
     val micMode: MicMode = MicMode.NONE,
     val micInfo: String = "",
     val levelUser: Float = -120f,
