@@ -49,6 +49,12 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 `local.properties`'e `rapor.whatsapp=905…` (sorun bildiriminin gideceği numara) eklenir; boş kalırsa paylaşımda kişi elle seçilir.
 
+**Sürüm imzası:** müşteri APK'sı projeye özel anahtarla imzalanır: `local.properties` → `imza.dosya` (örn. `~/.android/canli-ceviri.jks`), `imza.takma`, `imza.parola`. Anahtar ve parola git dışıdır; **yedekleyin**, kaybolursa müşterinin telefonuna güncelleme kurulamaz (uygulama silinip modeller yeniden indirilir). Anahtar yoksa derleme geliştirme anahtarıyla imzalar ve uyarır; o APK müşteriye gönderilmez.
+
+```bash
+keytool -genkeypair -keystore ~/.android/canli-ceviri.jks -alias canliceviri -keyalg RSA -keysize 2048 -validity 10000
+```
+
 Modeller ilk açılışta uygulamadan indirilir. Geliştirirken adb ile de konabilir:
 
 ```bash

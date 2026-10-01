@@ -41,12 +41,28 @@ android {
         }
     }
 
+    // Müşteriye elden verilen APK: projeye özel anahtar (local.properties: imza.dosya/imza.takma/imza.parola, git dışı).
+    // Anahtar yoksa geliştirme anahtarıyla imzalanır; o APK müşteriye gönderilmemeli (güncelleme uyumsuz olur).
+    signingConfigs {
+        create("musteri") {
+            val file = localProperty("imza.dosya")
+            if (file.isNotEmpty() && File(file).exists()) {
+                storeFile = File(file)
+                storePassword = localProperty("imza.parola")
+                keyAlias = localProperty("imza.takma")
+                keyPassword = localProperty("imza.parola")
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
-            // Müşteriye elden verilen APK; sonraki sürümler üstüne kurulabilsin diye bu Mac'in anahtarıyla imzalanıyor.
-            signingConfig = signingConfigs.getByName("debug")
+            val musteri = signingConfigs.getByName("musteri")
+            signingConfig = if (musteri.storeFile != null) musteri else signingConfigs.getByName("debug").also {
+                logger.warn("UYARI: sürüm imza anahtarı yok (local.properties imza.*); geliştirme anahtarıyla imzalanıyor")
+            }
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }
