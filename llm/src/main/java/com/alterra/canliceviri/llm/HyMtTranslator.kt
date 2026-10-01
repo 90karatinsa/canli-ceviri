@@ -74,6 +74,10 @@ class HyMtTranslator private constructor(private var handle: Long, val file: Fil
         const val MODEL_FILE = "Hy-MT2-1.8B-Q4_K_M.gguf"
         const val MODEL_URL = "https://huggingface.co/tencent/Hy-MT2-1.8B-GGUF/resolve/main/Hy-MT2-1.8B-Q4_K_M.gguf"
 
+        /** Kaliteli (yavaş) çeviri: aynı ailenin 7B modeli, isteğe bağlı indirilir (4,6 GB). */
+        const val QUALITY_MODEL_FILE = "Hy-MT2-7B-Q4_K_M.gguf"
+        const val QUALITY_MODEL_URL = "https://huggingface.co/tencent/Hy-MT2-7B-GGUF/resolve/main/Hy-MT2-7B-Q4_K_M.gguf"
+
         /** Modelin belgesine göre istemde tam İngilizce dil adları kullanılmalı. */
         val LANGUAGE_NAMES = mapOf(
             "tr" to "Turkish", "en" to "English", "zh" to "Chinese", "hi" to "Hindi", "es" to "Spanish",

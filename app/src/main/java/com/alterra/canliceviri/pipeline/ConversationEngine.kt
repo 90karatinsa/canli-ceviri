@@ -74,6 +74,8 @@ class ConversationEngine(private val context: Context, private val scope: Corout
         val speechRate: Float = 1f,
         /** Sorun bildirimi için son parçaların sesi saklansın (files/sorun/). */
         val attachAudio: Boolean = true,
+        /** Her çeviri kaliteli (7B) modelle: yavaş ama güvenilir. Model yoksa hızlı model kullanılır. */
+        val quality: Boolean = false,
     )
 
     /** İşçinin sırayla işlediği işler: ses parçası, yazılan metin, tekrar okuma, düzeltme. */
@@ -82,6 +84,8 @@ class ConversationEngine(private val context: Context, private val scope: Corout
         class Text(val text: String, val speaker: Speaker) : Task()
         class Respeak(val id: Long) : Task()
         class Edit(val id: Long, val text: String) : Task()
+        /** Baloncuğu kaliteli modelle yeniden çevir ve oku. */
+        class Requality(val id: Long) : Task()
     }
 
     private val _status = MutableStateFlow(EngineStatus())
@@ -91,6 +95,12 @@ class ConversationEngine(private val context: Context, private val scope: Corout
 
     private val front = AudioFrontEnd(context)
     private var translator: HyMtTranslator? = null
+    /**
+     * Kaliteli (7B) çeviri modeli; ilk gerektiğinde yüklenir (~10 sn, ~5 GB bellek). İki model birlikte ~8 GB tutuyor;
+     * kaliteli moddayken hızlı model bırakılır, hızlı modda 7B bir süre kullanılmayınca bırakılır.
+     */
+    private var translatorQuality: HyMtTranslator? = null
+    private var qualityUnload: Job? = null
     private val tts = TtsEngine(context)
     private var ttsReady = false
     private var whisper: WhisperModel? = null
@@ -199,6 +209,80 @@ class ConversationEngine(private val context: Context, private val scope: Corout
     fun missingModels(asrModel: String = settings.asrModel): List<String> =
         listOf(asrModel, VAD_MODEL, HyMtTranslator.MODEL_FILE).filter { !File(modelsDir, it).exists() }
 
+    /** Kaliteli çeviri modeli indirilmiş mi (isteğe bağlı). */
+    fun hasQualityModel(): Boolean = File(modelsDir, HyMtTranslator.QUALITY_MODEL_FILE).exists()
+
+    fun setQuality(v: Boolean) {
+        settings = settings.copy(quality = v)
+        note("çeviri kalitesi: ${if (v) "kaliteli (7B)" else "hızlı (1,8B)"}")
+        if (segmenter != null) scope.launch(worker) { applyModelPolicy() }
+    }
+
+    /** Kaliteli modeli gerekince yükler; dosya yoksa ya da açılamazsa null (hızlı model kullanılır). İşçide çağrılır. */
+    private fun qualityTranslator(): HyMtTranslator? {
+        qualityUnload?.cancel()
+        translatorQuality?.let { return it }
+        if (!hasQualityModel()) return null
+        val t0 = System.currentTimeMillis()
+        translatorQuality = HyMtTranslator.load(File(modelsDir, HyMtTranslator.QUALITY_MODEL_FILE), settings.threads)
+        note("kaliteli çeviri modeli ${if (translatorQuality != null) "yüklendi" else "açılamadı"} (${System.currentTimeMillis() - t0} ms)")
+        return translatorQuality
+    }
+
+    /** Hızlı model: kaliteli modda bırakılmış olabilir; gerekince yeniden yüklenir. İşçide çağrılır. */
+    private fun fastTranslator(): HyMtTranslator? {
+        translator?.let { return it }
+        translator = HyMtTranslator.load(File(modelsDir, HyMtTranslator.MODEL_FILE), settings.threads)
+        note("hızlı çeviri modeli ${if (translator != null) "yeniden yüklendi" else "açılamadı"}")
+        return translator
+    }
+
+    /**
+     * Bellek politikası (işçide): kaliteli modda 7B hazır tutulur, 1,8B bırakılır; hızlı modda 7B kullanılmadıkça
+     * [QUALITY_IDLE_MS] sonra bırakılır (yazılan metin ve "kaliteli çevir" onu yeniden yükler).
+     */
+    private fun applyModelPolicy() {
+        if (settings.quality && hasQualityModel()) {
+            if (qualityTranslator() != null && translator != null) {
+                translator?.close()
+                translator = null
+                note("hızlı çeviri modeli bırakıldı (kaliteli mod)")
+            }
+        } else {
+            fastTranslator()
+            scheduleQualityUnload()
+        }
+    }
+
+    /** Sistem bellek daraldı dedi (onTrimMemory) ya da düşük bellek: hızlı moddaysa 7B hemen bırakılır. */
+    fun trimMemory() {
+        if (settings.quality || translatorQuality == null) return
+        scope.launch(worker) {
+            if (!settings.quality && translatorQuality != null) {
+                translatorQuality?.close()
+                translatorQuality = null
+                note("kaliteli çeviri modeli bırakıldı (bellek daraldı)")
+            }
+        }
+    }
+
+    private fun scheduleQualityUnload() {
+        qualityUnload?.cancel()
+        if (translatorQuality == null || settings.quality) return
+        qualityUnload = scope.launch(worker) {
+            delay(QUALITY_IDLE_MS)
+            if (!settings.quality) {
+                translatorQuality?.close()
+                translatorQuality = null
+                note("kaliteli çeviri modeli bırakıldı (boşta)")
+            }
+        }
+    }
+
+    fun requality(id: Long) {
+        work.trySend(Task.Requality(id))
+    }
+
     fun setPartnerLanguage(code: String?) {
         manualPartnerLang = code != null
         partnerLang = code
@@ -269,6 +353,7 @@ class ConversationEngine(private val context: Context, private val scope: Corout
     private suspend fun startInternal() {
         if (!prepareModels()) return
         tts.speechRate = settings.speechRate
+        applyModelPolicy()
 
         val preferDual = settings.preferDual && settings.mode == Mode.CONVERSATION
         val mode = front.start(preferDual) { frames -> onFrames(frames) }
@@ -482,8 +567,9 @@ class ConversationEngine(private val context: Context, private val scope: Corout
         if (!ready) return@withContext
         suspend fun awaitIdle() {
             // Sıradaki ses, önceki çeviri seslendirilip bitmeden başlamasın (gerçekte de karşı taraf bekler).
+            // Kaliteli model yükleme + çeviri dakikalar sürebiliyor (bellek baskısında); üst sınır 5 dk.
             var waited = 0
-            while ((_status.value.busy || _status.value.playing || !work.isEmpty) && waited < 120_000) {
+            while ((_status.value.busy || _status.value.playing || !work.isEmpty) && waited < 300_000) {
                 delay(100)
                 waited += 100
             }
@@ -615,6 +701,8 @@ class ConversationEngine(private val context: Context, private val scope: Corout
         vadPartner?.close()
         translator?.close()
         translator = null
+        translatorQuality?.close()
+        translatorQuality = null
         tts.shutdown()
     }
 
@@ -748,6 +836,12 @@ class ConversationEngine(private val context: Context, private val scope: Corout
             val hearing = if (seg?.speaking == true && front.mode == MicMode.DUAL) {
                 if (lu - lp >= (userMeanDb + partnerMeanDb) / 2) Speaker.USER else Speaker.PARTNER
             } else null
+            // Bellek daraldıysa (hızlı modda) boştaki 7B bırakılsın (10 sn'de bir).
+            if (tick % 100 == 0 && translatorQuality != null && !settings.quality) {
+                val mi = android.app.ActivityManager.MemoryInfo()
+                (context.getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager).getMemoryInfo(mi)
+                if (mi.lowMemory || mi.availMem < LOW_MEMORY_BYTES) trimMemory()
+            }
             // Hoparlör ses düzeyi uyarısı için (saniyede bir): kulaklık takılıyken sistem kulaklığın düzeyini gösterir.
             if (tick % 10 == 0) {
                 val maxVol = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
@@ -776,6 +870,7 @@ class ConversationEngine(private val context: Context, private val scope: Corout
                 is Task.Text -> processText(job)
                 is Task.Respeak -> respeakNow(job.id)
                 is Task.Edit -> editNow(job)
+                is Task.Requality -> requalityNow(job.id)
             }
         } catch (e: Exception) {
             Log.e(TAG, "işleme hatası", e)
@@ -865,7 +960,7 @@ class ConversationEngine(private val context: Context, private val scope: Corout
                 upsert(Utterance(id, who, UtteranceState.DROPPED, audioMs, lang, text, asrMs = asrMs, note = "gürültü sayıldı"))
                 return
             }
-            translateAndSpeak(id, who, lang, text, audioMs, asrMs, note, seg.endedAt, typed = false)
+            translateAndSpeak(id, who, lang, text, audioMs, asrMs, note, seg.endedAt, typed = false, quality = settings.quality)
         } catch (e: Exception) {
             Log.e(TAG, "işleme hatası", e)
             update(id) { it.copy(state = UtteranceState.ERROR, note = e.message) }
@@ -875,7 +970,15 @@ class ConversationEngine(private val context: Context, private val scope: Corout
     private suspend fun processText(job: Task.Text) {
         val id = nextId++
         val lang = if (job.speaker == Speaker.USER) "tr" else (partnerLang ?: return)
-        translateAndSpeak(id, job.speaker, lang, job.text, 0, null, null, System.currentTimeMillis(), typed = true)
+        // Yazılan metinde bekleme kabul edilir: kaliteli model varsa onunla.
+        translateAndSpeak(id, job.speaker, lang, job.text, 0, null, null, System.currentTimeMillis(), typed = true, quality = true)
+    }
+
+    private suspend fun requalityNow(id: Long) {
+        val u = _utterances.value.firstOrNull { it.id == id } ?: return
+        val text = u.text ?: return
+        val lang = u.sourceLang ?: return
+        translateAndSpeak(id, u.speaker, lang, text, u.audioMs, u.asrMs, null, System.currentTimeMillis(), typed = u.typed, quality = true)
     }
 
     private fun respeakNow(id: Long) {
@@ -893,21 +996,35 @@ class ConversationEngine(private val context: Context, private val scope: Corout
             respeakNow(job.id)
             return
         }
-        translateAndSpeak(job.id, u.speaker, lang, job.text, u.audioMs, u.asrMs, "düzeltildi", System.currentTimeMillis(), typed = u.typed)
+        translateAndSpeak(job.id, u.speaker, lang, job.text, u.audioMs, u.asrMs, "düzeltildi", System.currentTimeMillis(), typed = u.typed, quality = true)
     }
 
-    /** Metin hazır: çevir, listeye yaz, doğru cihaza okut. Ses parçası, yazılan metin ve düzeltme bu yoldan geçer. */
+    /**
+     * Metin hazır: çevir, listeye yaz, doğru cihaza okut. Ses parçası, yazılan metin, düzeltme ve kaliteli yeniden çeviri
+     * bu yoldan geçer. [quality] istenip model yoksa hızlı model kullanılır.
+     */
     private suspend fun translateAndSpeak(
-        id: Long, who: Speaker, lang: String, text: String, audioMs: Long, asrMs: Long?, note: String?, speechEndedAt: Long, typed: Boolean,
+        id: Long, who: Speaker, lang: String, text: String, audioMs: Long, asrMs: Long?, note: String?, speechEndedAt: Long,
+        typed: Boolean, quality: Boolean,
     ) {
-        upsert(Utterance(id, who, UtteranceState.TRANSLATING, audioMs, lang, text, asrMs = asrMs, note = note, typed = typed))
+        val wantQuality = quality && hasQualityModel()
+        val loading = wantQuality && translatorQuality == null
+        upsert(
+            Utterance(
+                id, who, UtteranceState.TRANSLATING, audioMs, lang, text, asrMs = asrMs,
+                note = if (loading) listOfNotNull(note, "kaliteli model yükleniyor…").joinToString(" · ") else note, typed = typed,
+            )
+        )
         val target = if (who == Speaker.USER) (partnerLang ?: "en") else "tr"
         if (lang == target) {
             upsert(Utterance(id, who, UtteranceState.DONE, audioMs, lang, text, target, text, asrMs, 0, note = note, typed = typed))
             return
         }
+        val engine = (if (wantQuality) qualityTranslator() else null) ?: fastTranslator()
+        val usedQuality = wantQuality && engine === translatorQuality && engine != null
         val t0 = System.currentTimeMillis()
-        val mt = translator?.translate(text, target)
+        val mt = engine?.translate(text, target)
+        if (usedQuality) scheduleQualityUnload()
         if (mt == null || !mt.ok || mt.text.isEmpty()) {
             upsert(Utterance(id, who, UtteranceState.ERROR, audioMs, lang, text, target, null, asrMs, note = "çeviri yapılamadı", typed = typed))
             return
@@ -915,8 +1032,14 @@ class ConversationEngine(private val context: Context, private val scope: Corout
         val translation = mt.text
         val mtMs = System.currentTimeMillis() - t0
         val guessedTarget = if (who == Speaker.USER && partnerLang == null) "karşı tarafın dili belli değil, İngilizce kullanıldı" else null
-        val targetNote = listOfNotNull(note, guessedTarget).joinToString(" · ").ifEmpty { null }
-        upsert(Utterance(id, who, UtteranceState.SPEAKING, audioMs, lang, text, target, translation, asrMs, mtMs, note = targetNote, typed = typed))
+        val qualityNote = if (usedQuality) "kaliteli çeviri" else null
+        val targetNote = listOfNotNull(note, qualityNote, guessedTarget).joinToString(" · ").ifEmpty { null }
+        upsert(
+            Utterance(
+                id, who, UtteranceState.SPEAKING, audioMs, lang, text, target, translation, asrMs, mtMs,
+                note = targetNote, typed = typed, quality = usedQuality,
+            )
+        )
         if (ttsReady) enqueuePlay(id, who, target, translation, speechEndedAt)
         else update(id) { it.copy(state = UtteranceState.DONE) }
     }
@@ -928,7 +1051,12 @@ class ConversationEngine(private val context: Context, private val scope: Corout
         pendingPlays.incrementAndGet()
         _status.update { it.copy(playing = true) }
         update(id) { it.copy(state = UtteranceState.SPEAKING) }
-        play.trySend(PlayItem(id, text, targetLang, device, speechEndedAt))
+        if (!play.trySend(PlayItem(id, text, targetLang, device, speechEndedAt)).isSuccess) {
+            // Motor bu arada durduruldu: baloncuk "okunuyor"da takılı kalmasın.
+            pendingPlays.decrementAndGet()
+            _status.update { it.copy(playing = false) }
+            update(id) { it.copy(state = UtteranceState.DONE, note = listOfNotNull(it.note, "okunmadı: motor durdu").joinToString(" · ")) }
+        }
     }
 
     /** Seviye farkına göre kim konuştu; iki kümenin ortalamasını yavaşça günceller. */
@@ -1039,6 +1167,12 @@ class ConversationEngine(private val context: Context, private val scope: Corout
         private const val MANUAL_MAX_MS = 20_000L
         private const val EVENTS_MAX = 200
         private const val SEGMENT_FILES_MAX = 20
+
+        /** Hızlı modda 7B bu kadar süre kullanılmazsa bellekten bırakılır. */
+        private const val QUALITY_IDLE_MS = 3 * 60 * 1000L
+
+        /** Kullanılabilir bellek bunun altına inerse boştaki 7B bırakılır. */
+        private const val LOW_MEMORY_BYTES = 1_500L * 1024 * 1024
 
         /** Bas-konuş parçasının ortalama gücü bunun altındaysa konuşma yok sayılır (dBFS). */
         private const val SILENT_DB = -55f

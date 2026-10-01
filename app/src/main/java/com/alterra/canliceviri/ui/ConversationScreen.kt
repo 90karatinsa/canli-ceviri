@@ -120,8 +120,8 @@ fun ConversationScreen(
             if (vm.setup.ready && vm.setup.batteryRestricted && !vm.batteryAsked) BatteryCard(onFixBattery)
             StatusBar(vm, status)
             Conversation(
-                utterances, Modifier.weight(1f), manual = vm.manualInput,
-                onRespeak = vm::respeak, onEdit = { editing = it }, onFullscreen = { fullscreen = it },
+                utterances, Modifier.weight(1f), manual = vm.manualInput, qualityModel = vm.setup.qualityModel,
+                onRespeak = vm::respeak, onEdit = { editing = it }, onFullscreen = { fullscreen = it }, onRequality = vm::requality,
             )
             if (status.running && vm.manualInput) HoldButtons(vm, status)
             if (status.running) TextBar(vm, status)
@@ -307,9 +307,11 @@ private fun Conversation(
     items: List<Utterance>,
     modifier: Modifier,
     manual: Boolean,
+    qualityModel: Boolean,
     onRespeak: (Long) -> Unit,
     onEdit: (Utterance) -> Unit,
     onFullscreen: (Utterance) -> Unit,
+    onRequality: (Long) -> Unit,
 ) {
     val listState = rememberLazyListState()
     val imeVisible = WindowInsets.isImeVisible
@@ -331,12 +333,15 @@ private fun Conversation(
         return
     }
     LazyColumn(modifier.fillMaxWidth(), state = listState, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        items(items, key = { it.id }) { Bubble(it, onRespeak, onEdit, onFullscreen) }
+        items(items, key = { it.id }) { Bubble(it, qualityModel, onRespeak, onEdit, onFullscreen, onRequality) }
     }
 }
 
 @Composable
-private fun Bubble(u: Utterance, onRespeak: (Long) -> Unit, onEdit: (Utterance) -> Unit, onFullscreen: (Utterance) -> Unit) {
+private fun Bubble(
+    u: Utterance, qualityModel: Boolean,
+    onRespeak: (Long) -> Unit, onEdit: (Utterance) -> Unit, onFullscreen: (Utterance) -> Unit, onRequality: (Long) -> Unit,
+) {
     val mine = u.speaker == Speaker.USER
     if (u.state == UtteranceState.DROPPED) {
         Text(
@@ -363,7 +368,7 @@ private fun Bubble(u: Utterance, onRespeak: (Long) -> Unit, onEdit: (Utterance) 
                     val src = langName(u.sourceLang)
                     val dst = langName(u.targetLang)
                     Text(
-                        (if (mine) "Siz" else "Karşı taraf") + (if (u.typed) " ✎" else "") +
+                        (if (mine) "Siz" else "Karşı taraf") + (if (u.typed) " ✎" else "") + (if (u.quality) " ✦" else "") +
                             (if (src.isNotEmpty()) " · $src" else "") + (if (dst.isNotEmpty()) " → $dst" else ""),
                         style = MaterialTheme.typography.labelMedium,
                         color = onBubbleMuted,
@@ -396,6 +401,9 @@ private fun Bubble(u: Utterance, onRespeak: (Long) -> Unit, onEdit: (Utterance) 
             }
             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                 if (u.translation != null) DropdownMenuItem(text = { Text("Tekrar oku") }, onClick = { menu = false; onRespeak(u.id) })
+                if (qualityModel && !u.quality && u.text != null && u.sourceLang != null) {
+                    DropdownMenuItem(text = { Text("Kaliteli çevir (yavaş)") }, onClick = { menu = false; onRequality(u.id) })
+                }
                 if (mine && u.text != null) DropdownMenuItem(text = { Text("Düzenle") }, onClick = { menu = false; onEdit(u) })
                 if (u.translation != null) DropdownMenuItem(text = { Text("Tam ekran göster") }, onClick = { menu = false; onFullscreen(u) })
             }
@@ -547,6 +555,28 @@ private fun SettingsSheet(vm: ConversationViewModel, onClose: () -> Unit, onFixB
                     "gürültülü yerde ve kulaklıksız kullanımda daha güvenilir.",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+
+            Text("Çeviri kalitesi", style = MaterialTheme.typography.titleMedium)
+            if (vm.setup.qualityModel) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(selected = !vm.quality, onClick = { vm.chooseQuality(false) }, label = { Text("Hızlı") })
+                    FilterChip(selected = vm.quality, onClick = { vm.chooseQuality(true) }, label = { Text("Kaliteli (yavaş)") })
+                }
+                Text(
+                    "Hızlı: her cümle 1-2 sn, ara sıra anlam hatası. Kaliteli: 5-10 sn, çok daha güvenilir; hastane, polis gibi önemli " +
+                        "konuşmalar için. Yazılan metinler ve \"Kaliteli çevir\" her zaman kaliteli modeli kullanır.",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else {
+                Text(
+                    "Kaliteli çeviri modeli (4,6 GB, Wi-Fi'de bir kez) indirilirse önemli cümleler daha güvenilir çevrilir; " +
+                        "canlı sohbet hızlı modelle sürer.",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                val progress = vm.setup.qualityProgress
+                if (progress != null) Text(progress, style = MaterialTheme.typography.bodySmall)
+                else OutlinedButton(onClick = vm::downloadQualityModel) { Text("Kaliteli modeli indir (4,6 GB)") }
+            }
 
             Text("Okuma hızı", style = MaterialTheme.typography.titleMedium)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

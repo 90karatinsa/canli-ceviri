@@ -29,8 +29,10 @@ object MtBench {
             progress(line)
         }
         val threads = Regex("threads=(\\d+)").find(spec)?.groupValues?.get(1)?.toIntOrNull() ?: com.alterra.canliceviri.DeviceTuning.threads
+        // model=Hy-MT2-7B-Q4_K_M.gguf ile başka bir çeviri modeli (models/ altında) ölçülür.
+        val modelName = Regex("model=([^;]+)").find(spec)?.groupValues?.get(1)?.trim() ?: HyMtTranslator.MODEL_FILE
         val base = context.getExternalFilesDir(null) ?: return "dosya dizini yok"
-        val file = File(base, "models/${HyMtTranslator.MODEL_FILE}")
+        val file = File(base, "models/$modelName")
         emit("Çeviri testi · ${file.name} · iş parçacığı $threads")
         emit("CPU: ${LlamaNative.systemInfo().trim()}")
         val t0 = SystemClock.elapsedRealtime()

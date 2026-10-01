@@ -35,6 +35,9 @@ data class SetupState(
     val googleTtsMissing: Boolean = false,
     /** Pil optimizasyonu açık: Samsung'da uyuyan uygulama kısıtı ön plan hizmetini öldürebiliyor. */
     val batteryRestricted: Boolean = false,
+    /** Kaliteli (7B) çeviri modeli indirilmiş mi; indirme sürüyorsa ilerleme metni. */
+    val qualityModel: Boolean = false,
+    val qualityProgress: String? = null,
     val checked: Boolean = false,
 ) {
     val ready: Boolean get() = checked && missingModels.isEmpty() && missingPacks.isEmpty() && missingVoices.isEmpty()
@@ -56,6 +59,7 @@ class ConversationViewModel(app: Application) : AndroidViewModel(app) {
     var manualInput by mutableStateOf(prefs.manualInput); private set
     var speechRate by mutableStateOf(prefs.speechRate); private set
     var attachAudio by mutableStateOf(prefs.attachAudio); private set
+    var quality by mutableStateOf(prefs.quality); private set
 
     init {
         engine.setPartnerLanguage(partnerLang)
@@ -122,8 +126,39 @@ class ConversationViewModel(app: Application) : AndroidViewModel(app) {
     /** Sorun bildirimi için ayar özeti. */
     fun reportSettings() = com.alterra.canliceviri.report.IssueReport.Settings(
         mode = mode.name, manualInput = manualInput, partnerLang = partnerLang, speechRate = speechRate, attachAudio = attachAudio,
-        ttsEngine = ttsEnginePackage, missingVoices = setup.missingVoices,
+        ttsEngine = ttsEnginePackage, missingVoices = setup.missingVoices, quality = quality, qualityModel = setup.qualityModel,
     )
+
+    fun chooseQuality(v: Boolean) {
+        quality = v
+        prefs.quality = v
+        engine.setQuality(v)
+    }
+
+    fun requality(id: Long) = engine.requality(id)
+
+    /** Kaliteli çeviri modelini (4,6 GB) indirir; bitince kaliteli mod açılır. */
+    fun downloadQualityModel() {
+        if (setup.qualityProgress != null) return
+        viewModelScope.launch {
+            val dir = engine.modelsDir.apply { mkdirs() }
+            val name = HyMtTranslator.QUALITY_MODEL_FILE
+            try {
+                withContext(Dispatchers.IO) {
+                    download(HyMtTranslator.QUALITY_MODEL_URL, File(dir, name)) { done, total ->
+                        val text = if (total > 0) "%${100 * done / total} (${done / 1_000_000}/${total / 1_000_000} MB)" else "${done / 1_000_000} MB"
+                        viewModelScope.launch { setup = setup.copy(qualityProgress = text) }
+                    }
+                }
+                setup = setup.copy(qualityProgress = null)
+                chooseQuality(true)
+            } catch (e: Exception) {
+                setup = setup.copy(qualityProgress = "İndirilemedi (${e.message}). Wi-Fi'yi ve uygulamanın ağ iznini kontrol edin.")
+                return@launch
+            }
+            refreshSetup()
+        }
+    }
 
     fun beginManual(speaker: Speaker) = engine.beginManual(speaker)
     fun endManual() = engine.endManual()
@@ -145,7 +180,10 @@ class ConversationViewModel(app: Application) : AndroidViewModel(app) {
     fun refreshSetup() {
         val pm = getApplication<Application>().getSystemService(Context.POWER_SERVICE) as PowerManager
         val restricted = !pm.isIgnoringBatteryOptimizations(getApplication<Application>().packageName)
-        setup = setup.copy(missingModels = engine.missingModels(), missingPacks = emptyList(), batteryRestricted = restricted, checked = true)
+        setup = setup.copy(
+            missingModels = engine.missingModels(), missingPacks = emptyList(), batteryRestricted = restricted,
+            qualityModel = engine.hasQualityModel(), checked = true,
+        )
         viewModelScope.launch {
             val missing = engine.voiceStatuses()
                 .filter { it.state != com.alterra.canliceviri.audio.TtsEngine.State.READY }
@@ -204,8 +242,10 @@ class ConversationViewModel(app: Application) : AndroidViewModel(app) {
                 val (lang, text) = item.split(':', limit = 2).takeIf { it.size == 2 } ?: return@mapNotNull null
                 (if (lang == "tr") Speaker.USER else Speaker.PARTNER) to text
             } ?: emptyList()
+            android.util.Log.i("CanliCeviri", "simülasyon: ${clips.size} ses, ${typed.size} metin, seçenekler=$options, liste=$list")
             if (clips.isEmpty() && typed.isEmpty()) return@launch
-            engine.simulate(clips, ConversationEngine.Settings(mode = mode, manual = manual), dual, typed)
+            val quality = options["kalite"] == "1"
+            engine.simulate(clips, ConversationEngine.Settings(mode = mode, manual = manual, quality = quality), dual, typed)
         }
     }
 

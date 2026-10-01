@@ -17,6 +17,11 @@ class CanliCeviriApp : Application() {
 
     val engine: ConversationEngine by lazy { ConversationEngine(this, appScope) }
 
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        if (level >= TRIM_MEMORY_RUNNING_LOW) engine.trimMemory()
+    }
+
     companion object {
         fun of(context: Context): CanliCeviriApp = context.applicationContext as CanliCeviriApp
     }

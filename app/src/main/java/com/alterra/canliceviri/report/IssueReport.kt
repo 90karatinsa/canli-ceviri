@@ -26,6 +26,8 @@ object IssueReport {
         val attachAudio: Boolean,
         val ttsEngine: String?,
         val missingVoices: List<String>,
+        val quality: Boolean = false,
+        val qualityModel: Boolean = false,
     )
 
     fun dir(context: Context): File = File(context.getExternalFilesDir(null), "sorun").apply { mkdirs() }
@@ -48,7 +50,8 @@ object IssueReport {
             appendLine()
             appendLine("AYARLAR")
             appendLine("Mod: ${settings.mode} · konuşma biçimi: ${if (settings.manualInput) "düğmeyle" else "otomatik"} · " +
-                "karşı dil: ${settings.partnerLang ?: "otomatik"} · okuma hızı: ${settings.speechRate}")
+                "karşı dil: ${settings.partnerLang ?: "otomatik"} · okuma hızı: ${settings.speechRate} · " +
+                "çeviri: ${if (settings.quality) "kaliteli (7B)" else "hızlı (1,8B)"}${if (settings.qualityModel) "" else " · 7B indirilmemiş"}")
             appendLine("Ses motoru: ${settings.ttsEngine ?: "?"} · eksik sesler: ${settings.missingVoices.ifEmpty { listOf("yok") }.joinToString()}")
             appendLine("Durum: çalışıyor=${status.running} · mikrofon=${status.micMode} (${status.micInfo}) · duraklama=${status.paused ?: "yok"} · " +
                 "kulaklık=${if (status.headsetAttached) "takılı" else "yok"} · medya sesi=%${(status.speakerVolume * 100).toInt()} · " +

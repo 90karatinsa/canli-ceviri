@@ -55,6 +55,18 @@ Düğme basılıyken başka hiçbir şey dinlenmez; en çok 20 saniye.
 
 Ayarlar'da ayrıca **Okuma hızı: Yavaş** seçeneği var.
 
+## Kaliteli çeviri (isteğe bağlı, önerilir)
+
+Uygulamada iki çeviri modeli var:
+- **Hızlı** (yerleşik): her cümle 1–2 saniyede çevrilir; ara sıra anlam hatası yapabilir (saat, yön, sayı gibi ayrıntılarda).
+- **Kaliteli** (4,6 GB, Wi-Fi'de bir kez indirilir): 5–10 saniye sürer ama çok daha güvenilir.
+
+⋮ → **Ayarlar** → **Kaliteli modeli indir**. İndikten sonra:
+- Yazarak girdiğiniz metinler ve **Düzenle** her zaman kaliteli modelle çevrilir.
+- Bir baloncuğa dokunup **Kaliteli çevir**'i seçerseniz o cümle yeniden, kaliteli modelle çevrilip okunur (önemli bir cümleden emin olmak için).
+- Hastane, polis, pasaport gibi önemli konuşmalarda Ayarlar'dan **Kaliteli** modu açın: her cümle kaliteli modelle çevrilir; bitince **Hızlı**'ya dönün.
+Kaliteli model çok bellek kullanır; telefon yavaşlarsa Hızlı'ya dönün.
+
 ## Önemli
 
 - **Ukraynaca:** Uygulama Ukraynacayı Rusça sanabilir; Ukrayna'da üstteki dil düğmesinden **Ukraynaca**'yı elle seçin.

@@ -27,6 +27,11 @@ class Prefs(context: Context) {
         get() = p.getString("karsi_dil", null)
         set(v) = p.edit().putString("karsi_dil", v).apply()
 
+    /** Kaliteli (7B) çeviri modu. */
+    var quality: Boolean
+        get() = p.getBoolean("kaliteli", false)
+        set(v) = p.edit().putBoolean("kaliteli", v).apply()
+
     /** Pil kısıtlaması penceresi bir kez gösterildi. */
     var batteryAsked: Boolean
         get() = p.getBoolean("pil_soruldu", false)

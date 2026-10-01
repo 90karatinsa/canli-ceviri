@@ -34,6 +34,8 @@ data class Utterance(
     val note: String? = null,
     /** Konuşma yerine yazılarak girildi. */
     val typed: Boolean = false,
+    /** Kaliteli (7B) modelle çevrildi. */
+    val quality: Boolean = false,
 )
 
 data class EngineStatus(
