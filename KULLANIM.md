@@ -30,7 +30,7 @@ Diller: İngilizce, Çince, Hintçe, İspanyolca, Arapça, Fransızca, Bengalce,
 
 Ekranı kilitleseniz ya da telefonu cebinize koysanız da çeviri sürer (bildirimde "Çeviri dinliyor" yazar). Bildirimdeki **Durdur** ile de kapatabilirsiniz.
 
-**Dinleme** modu: anons ve uzun anlatımlar içindir. Duyulan her şey Türkçe olarak kulaklığa gelir.
+**Dinleme modu**: anons, rehber anlatımı, toplantı gibi tek yönlü durumlar içindir. Duyulan her şey Türkçe olarak yalnızca kulaklığa gelir; hoparlörden hiçbir şey okunmaz.
 
 ## Otomatik algılama şaşırırsa: düğmeyle konuşma
 

@@ -74,6 +74,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -161,9 +162,9 @@ private fun Header(vm: ConversationViewModel, status: EngineStatus, onOpenDiagno
 private fun Controls(vm: ConversationViewModel, status: EngineStatus) {
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
         FilterChip(selected = vm.mode == Mode.CONVERSATION, onClick = { vm.selectMode(Mode.CONVERSATION) }, label = { Text("Konuşma") })
-        FilterChip(selected = vm.mode == Mode.LISTENING, onClick = { vm.selectMode(Mode.LISTENING) }, label = { Text("Dinleme") })
-        Spacer(Modifier.weight(1f))
-        LanguagePicker(vm, status)
+        FilterChip(selected = vm.mode == Mode.LISTENING, onClick = { vm.selectMode(Mode.LISTENING) }, label = { Text("Dinleme modu") })
+        // Kalan genişlik dil düğmesine; dar ekranda metin taşmak yerine kısalır.
+        Row(Modifier.weight(1f), horizontalArrangement = Arrangement.End) { LanguagePicker(vm, status) }
     }
 }
 
@@ -178,7 +179,7 @@ private fun LanguagePicker(vm: ConversationViewModel, status: EngineStatus) {
     }
     Box {
         OutlinedButton(onClick = { open = true }, contentPadding = PaddingValues(horizontal = 12.dp)) {
-            Text("Karşı: $label ▾", maxLines = 1, softWrap = false)
+            Text("Karşı: $label ▾", maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
         }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
             DropdownMenuItem(text = { Text("Otomatik algıla") }, onClick = { open = false; vm.selectPartnerLang(null) })
