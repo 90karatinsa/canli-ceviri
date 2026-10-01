@@ -39,6 +39,16 @@ ekle cs  cs Zuzana "Dobrý den, mohu vidět váš pas, prosím?"
 ekle uk  uk Lesya "Доброго дня, покажіть, будь ласка, ваш паспорт."
 ekle ja  ja Kyoko "おはようございます。パスポートを見せていただけますか？"
 ekle ko  ko Yuna "안녕하세요, 여권을 보여 주시겠어요?"
+# Kesintisiz dinleme testi: 8 yabancı cümle 0,8 sn aralıkla tek parça (dinleme modunda --es simule "akis").
+python3 - "$OUT" <<'PY'
+import sys, wave
+out_dir = sys.argv[1]
+w = wave.open(f"{out_dir}/akis.wav", "wb"); w.setnchannels(1); w.setsampwidth(2); w.setframerate(16000)
+gap = b"\x00\x00" * int(16000 * 0.8)
+for n in ["en", "zh", "es", "fr", "de", "it", "ru", "ja"]:
+    r = wave.open(f"{out_dir}/{n}.wav", "rb"); w.writeframes(r.readframes(r.getnframes())); r.close(); w.writeframes(gap)
+w.close()
+PY
 echo "Üretildi: $(ls "$OUT"/*.wav | wc -l | tr -d ' ') dosya → $OUT"
 if [ -n "$1" ]; then
   D=/sdcard/Android/data/com.alterra.canliceviri/files/test

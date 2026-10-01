@@ -85,6 +85,7 @@ Süreler arka planda işlemciyi %100-370 kullanan bir uygulamayla ölçüldü; t
 - Işın araması (5) Türkçede fayda etmedi (%3,9'a karşı %4,0), çözmeyi yarı yarıya yavaşlattı. Tam bağlam (30 sn) CER %4,0 ama 3 kat yavaş; 768 bağlam %3,2, 2 kat yavaş.
 - Whisper large-v3-turbo (q5_0) işlemcide cümle başına 20 sn'den fazla: kullanılamaz.
 - **Çeviri modeli karşılaştırması (54 cümle, Pixel, ön planda):** 1,8B ortalama 1,7 sn; 7B ortalama 13,9 sn (kısa cümle 6-8 sn, Hintçe/Bengalce gibi uzun yazımlılar 50 sn). Kalite: "Uçağım üçte kalkıyor" cümlesinde 1,8B 18 dilin 10'unda saati bozdu, 7B hepsinde doğru. 7B yüklemesi ~10 sn, iki model birlikte ~8 GB RSS; takas baskısında 7B çevirisi dakikalara çıkıyor.
+- **Kesintisiz dinleme (dinleme modu, 36 sn'lik 8 cümlelik tek parça, `simule "akis"`):** 8/8 cümle ayrı parça olarak yakalandı ve doğru dilde çevrildi; cümle bitiminden yazıya 1,2-3,2 sn, çeviriye +1,3-1,7 sn; kuyruk birikmedi (işleme gerçek zamandan hızlı).
 - **Uçtan uca (simülasyon, tek mikrofon, dil tespiti dahil):** sessizlik algılandıktan sonra ilk çeviri sesi 2,1-3,1 sn (ağır arka plan yükü altında). Çeviri (Hy-MT2) cümle başına 0,9-1,9 sn; Bengalce gibi uzun yazımlı dillerde 3-4 sn.
 - **Seslendirme (Google TTS, 11 dilin internetsiz sesi):** Başlat'ta Türkçe ve karşı tarafın dili sessizce bir kez sentezleniyor; ilk Türkçe okuma 1,4 sn'den 0,05 sn'ye indi. Denetim: `--es ses 1` her dili hoparlörden okuyup kullanılan sesi `files/ses.txt`'ye yazar.
 - İki dahili mikrofon: yalnızca biri "görüşme" türündeyse aynı anda ayrı açılabiliyor.
