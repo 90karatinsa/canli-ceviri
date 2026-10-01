@@ -897,7 +897,7 @@ class ConversationEngine(private val context: Context, private val scope: Corout
             fun audioCtxFor(pcm: FloatArray) = if (settings.fullAudioCtx) 0 else WhisperModel.autoAudioCtx(pcm.size, settings.padSeconds)
 
             var lang: String
-            var note: String? = null
+            var detail: String? = null
             if (!manualPartnerLang && partnerLocked && System.currentTimeMillis() - lastPartnerAt > RELOCK_AFTER_MS) unlockPartnerLang()
             val forced = seg.forcedSpeaker != null
             if (speaker == Speaker.USER) {
@@ -927,7 +927,7 @@ class ConversationEngine(private val context: Context, private val scope: Corout
                     speaker = Speaker.PARTNER
                     if (best.first == "tr" && settings.mode == Mode.LISTENING) lang = "tr"
                     if (!manualPartnerLang && lang != "tr") vote(lang, foreign?.value ?: 0f)
-                    note = "dil: ${lang} ${(100 * (foreign?.value ?: 0f)).toInt()}% (${guess.ms.toInt()} ms)"
+                    detail = "dil: ${lang} ${(100 * (foreign?.value ?: 0f)).toInt()}% (${guess.ms.toInt()} ms)"
                 }
             }
             val who = speaker ?: Speaker.PARTNER
@@ -953,14 +953,14 @@ class ConversationEngine(private val context: Context, private val scope: Corout
             val asrMs = System.currentTimeMillis() - seg.endedAt
             if (r.looped || r.retried) {
                 val loop = if (r.retried) "döngü: uzun bağlamla yeniden çözüldü" else "döngü kesildi"
-                note = if (note == null) loop else "$note · $loop"
+                detail = if (detail == null) loop else "$detail · $loop"
             }
             val text = TextFilters.collapseRepeats(r.text).let { if (lang == "bn") TextFilters.devanagariToBengali(it) else it }
             if (!r.ok || TextFilters.isHallucination(text, lang, r.noSpeechProb, r.avgTokenP)) {
                 upsert(Utterance(id, who, UtteranceState.DROPPED, audioMs, lang, text, asrMs = asrMs, note = "gürültü sayıldı"))
                 return
             }
-            translateAndSpeak(id, who, lang, text, audioMs, asrMs, note, seg.endedAt, typed = false, quality = settings.quality)
+            translateAndSpeak(id, who, lang, text, audioMs, asrMs, null, seg.endedAt, typed = false, quality = settings.quality, detail = detail)
         } catch (e: Exception) {
             Log.e(TAG, "işleme hatası", e)
             update(id) { it.copy(state = UtteranceState.ERROR, note = e.message) }
@@ -1005,19 +1005,19 @@ class ConversationEngine(private val context: Context, private val scope: Corout
      */
     private suspend fun translateAndSpeak(
         id: Long, who: Speaker, lang: String, text: String, audioMs: Long, asrMs: Long?, note: String?, speechEndedAt: Long,
-        typed: Boolean, quality: Boolean,
+        typed: Boolean, quality: Boolean, detail: String? = null,
     ) {
         val wantQuality = quality && hasQualityModel()
         val loading = wantQuality && translatorQuality == null
         upsert(
             Utterance(
                 id, who, UtteranceState.TRANSLATING, audioMs, lang, text, asrMs = asrMs,
-                note = if (loading) listOfNotNull(note, "kaliteli model yükleniyor…").joinToString(" · ") else note, typed = typed,
+                note = if (loading) listOfNotNull(note, "kaliteli model yükleniyor…").joinToString(" · ") else note, detail = detail, typed = typed,
             )
         )
         val target = if (who == Speaker.USER) (partnerLang ?: "en") else "tr"
         if (lang == target) {
-            upsert(Utterance(id, who, UtteranceState.DONE, audioMs, lang, text, target, text, asrMs, 0, note = note, typed = typed))
+            upsert(Utterance(id, who, UtteranceState.DONE, audioMs, lang, text, target, text, asrMs, 0, note = note, detail = detail, typed = typed))
             return
         }
         val engine = (if (wantQuality) qualityTranslator() else null) ?: fastTranslator()
@@ -1026,7 +1026,7 @@ class ConversationEngine(private val context: Context, private val scope: Corout
         val mt = engine?.translate(text, target)
         if (usedQuality) scheduleQualityUnload()
         if (mt == null || !mt.ok || mt.text.isEmpty()) {
-            upsert(Utterance(id, who, UtteranceState.ERROR, audioMs, lang, text, target, null, asrMs, note = "çeviri yapılamadı", typed = typed))
+            upsert(Utterance(id, who, UtteranceState.ERROR, audioMs, lang, text, target, null, asrMs, note = "çeviri yapılamadı", detail = detail, typed = typed))
             return
         }
         val translation = mt.text
@@ -1037,7 +1037,7 @@ class ConversationEngine(private val context: Context, private val scope: Corout
         upsert(
             Utterance(
                 id, who, UtteranceState.SPEAKING, audioMs, lang, text, target, translation, asrMs, mtMs,
-                note = targetNote, typed = typed, quality = usedQuality,
+                note = targetNote, detail = detail, typed = typed, quality = usedQuality,
             )
         )
         if (ttsReady) enqueuePlay(id, who, target, translation, speechEndedAt)
@@ -1135,7 +1135,8 @@ class ConversationEngine(private val context: Context, private val scope: Corout
     private fun logResult(u: Utterance) {
         note(
             "sonuç #${u.id} ${u.speaker} ${u.sourceLang}→${u.targetLang} ${u.state} ses=${u.audioMs}ms yazı=${u.asrMs}ms " +
-                "çeviri=${u.mtMs}ms ilk-ses=${u.latencyMs}ms${if (u.typed) " yazılı" else ""} | ${u.text} | ${u.translation} | ${u.note ?: ""}",
+                "çeviri=${u.mtMs}ms ilk-ses=${u.latencyMs}ms${if (u.typed) " yazılı" else ""} | ${u.text} | ${u.translation} | " +
+                listOfNotNull(u.note, u.detail).joinToString(" · "),
         )
     }
 

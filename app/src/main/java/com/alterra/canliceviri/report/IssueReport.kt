@@ -78,7 +78,7 @@ object IssueReport {
         return "#${u.id} ${if (u.speaker.name == "USER") "Siz" else "Karşı"} ${name(u.sourceLang)}→${name(u.targetLang)} ${u.state}" +
             (if (u.typed) " yazılı" else " ses ${u.audioMs} ms") +
             " yazı=${u.asrMs ?: "-"} ms çeviri=${u.mtMs ?: "-"} ms ilk-ses=${u.latencyMs ?: "-"} ms | ${u.text ?: ""} | ${u.translation ?: ""}" +
-            (u.note?.let { " | $it" } ?: "")
+            listOfNotNull(u.note, u.detail).takeIf { it.isNotEmpty() }?.let { " | " + it.joinToString(" · ") }.orEmpty()
     }
 
     /** Klasör şişmesin: en yeni 5 rapor ve en yeni 20 parça kalır. */

@@ -32,6 +32,11 @@ class Prefs(context: Context) {
         get() = p.getBoolean("kaliteli", false)
         set(v) = p.edit().putBoolean("kaliteli", v).apply()
 
+    /** Geliştirici bilgileri: süreler, dil tespiti, seviye çubukları ekranda görünsün. */
+    var devInfo: Boolean
+        get() = p.getBoolean("gelistirici", false)
+        set(v) = p.edit().putBoolean("gelistirici", v).apply()
+
     /** Pil kısıtlaması penceresi bir kez gösterildi. */
     var batteryAsked: Boolean
         get() = p.getBoolean("pil_soruldu", false)

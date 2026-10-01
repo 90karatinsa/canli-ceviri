@@ -31,7 +31,10 @@ data class Utterance(
     val mtMs: Long? = null,
     /** Konuşma bitişinden çevirinin ilk sesine kadar geçen toplam süre. */
     val latencyMs: Long? = null,
+    /** Kullanıcıya gösterilen not (düzeltildi, kaliteli çeviri, okunamadı…). */
     val note: String? = null,
+    /** Teknik not (dil tespiti, döngü); yalnızca geliştirici bilgileri açıkken ve raporda. */
+    val detail: String? = null,
     /** Konuşma yerine yazılarak girildi. */
     val typed: Boolean = false,
     /** Kaliteli (7B) modelle çevrildi. */

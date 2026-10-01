@@ -114,13 +114,13 @@ fun ConversationScreen(
                 .padding(horizontal = 16.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Header(vm, onOpenDiagnostics, onOpenSettings = { settingsOpen = true }, onReport = { reportOpen = true })
+            Header(vm, status, onOpenDiagnostics, onOpenSettings = { settingsOpen = true }, onReport = { reportOpen = true })
             Controls(vm, status)
             if (!vm.setup.ready) SetupCard(vm, onInstallVoices, onInstallGoogleTts)
             if (vm.setup.ready && vm.setup.batteryRestricted && !vm.batteryAsked) BatteryCard(onFixBattery)
             StatusBar(vm, status)
             Conversation(
-                utterances, Modifier.weight(1f), manual = vm.manualInput, qualityModel = vm.setup.qualityModel,
+                utterances, Modifier.weight(1f), manual = vm.manualInput, qualityModel = vm.setup.qualityModel, devInfo = vm.devInfo,
                 onRespeak = vm::respeak, onEdit = { editing = it }, onFullscreen = { fullscreen = it }, onRequality = vm::requality,
             )
             if (status.running && vm.manualInput) HoldButtons(vm, status)
@@ -135,13 +135,19 @@ fun ConversationScreen(
 }
 
 @Composable
-private fun Header(vm: ConversationViewModel, onOpenDiagnostics: () -> Unit, onOpenSettings: () -> Unit, onReport: () -> Unit) {
+private fun Header(vm: ConversationViewModel, status: EngineStatus, onOpenDiagnostics: () -> Unit, onOpenSettings: () -> Unit, onReport: () -> Unit) {
     var menu by remember { mutableStateOf(false) }
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text("Canlı Çeviri", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
         Box {
             IconButton(onClick = { menu = true }) { Icon(Icons.Filled.MoreVert, contentDescription = "Menü") }
             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                if (status.running) {
+                    DropdownMenuItem(
+                        text = { Text("Tekrar söylemesini iste") },
+                        onClick = { menu = false; vm.requestRepeat() },
+                    )
+                }
                 DropdownMenuItem(text = { Text("Sorun bildir") }, onClick = { menu = false; onReport() })
                 DropdownMenuItem(text = { Text("Ayarlar") }, onClick = { menu = false; onOpenSettings() })
                 DropdownMenuItem(text = { Text("Cihaz testi") }, onClick = { menu = false; onOpenDiagnostics() })
@@ -166,12 +172,14 @@ private fun LanguagePicker(vm: ConversationViewModel, status: EngineStatus) {
     var open by remember { mutableStateOf(false) }
     val label = when {
         vm.partnerLang != null -> Languages.FOREIGN.first { it.code == vm.partnerLang }.nameTr
-        status.partnerLang != null -> "Otomatik: " + (Languages.FOREIGN.firstOrNull { it.code == status.partnerLang }?.nameTr ?: status.partnerLang) +
+        status.partnerLang != null -> (Languages.FOREIGN.firstOrNull { it.code == status.partnerLang }?.nameTr ?: status.partnerLang) +
             if (status.partnerLangLocked) "" else "?"
-        else -> "Dil: otomatik"
+        else -> "Otomatik"
     }
     Box {
-        OutlinedButton(onClick = { open = true }, contentPadding = PaddingValues(horizontal = 12.dp)) { Text("$label ▾") }
+        OutlinedButton(onClick = { open = true }, contentPadding = PaddingValues(horizontal = 12.dp)) {
+            Text("Karşı: $label ▾", maxLines = 1, softWrap = false)
+        }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
             DropdownMenuItem(text = { Text("Otomatik algıla") }, onClick = { open = false; vm.selectPartnerLang(null) })
             Languages.FOREIGN.forEach { l ->
@@ -233,38 +241,45 @@ private fun BatteryCard(onFixBattery: () -> Unit) {
 @Composable
 private fun StatusBar(vm: ConversationViewModel, status: EngineStatus) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        val activity = when {
-            !status.running -> "Durduruldu"
-            status.paused != null -> "⏸ ${status.paused} — bitince kendiliğinden sürer"
-            status.recording == Speaker.USER -> "● Siz konuşuyorsunuz (kayıt ${sec(System.currentTimeMillis() - status.recordingSince)})"
-            status.recording == Speaker.PARTNER -> "● Karşı taraf konuşuyor (kayıt ${sec(System.currentTimeMillis() - status.recordingSince)})"
-            status.playing -> "🔊 Çeviri okunuyor…"
-            status.hearingAnyone && status.hearing == Speaker.USER -> "🗣 Siz konuşuyorsunuz"
-            status.hearingAnyone && status.hearing == Speaker.PARTNER -> "👂 Karşı taraf konuşuyor"
-            status.hearingAnyone -> "👂 Konuşma duyuluyor"
-            status.busy -> "⏳ Çevriliyor…"
-            vm.manualInput -> "Konuşurken düğmeyi basılı tutun"
-            else -> "Dinliyor…"
+        val elapsed = sec(System.currentTimeMillis() - status.recordingSince)
+        val (text, color) = when {
+            !status.running -> "Durduruldu" to MaterialTheme.colorScheme.outline
+            status.paused != null -> "Duraklatıldı: ${status.paused}. Bitince kendiliğinden sürer." to MaterialTheme.colorScheme.error
+            status.recording == Speaker.USER -> "Siz konuşuyorsunuz · $elapsed" to MaterialTheme.colorScheme.primary
+            status.recording == Speaker.PARTNER -> "Karşı taraf konuşuyor · $elapsed" to MaterialTheme.colorScheme.tertiary
+            status.playing -> "Çeviri okunuyor…" to MaterialTheme.colorScheme.primary
+            status.hearingAnyone && status.hearing == Speaker.USER -> "Siz konuşuyorsunuz" to MaterialTheme.colorScheme.primary
+            status.hearingAnyone && status.hearing == Speaker.PARTNER -> "Karşı taraf konuşuyor" to MaterialTheme.colorScheme.tertiary
+            status.hearingAnyone -> "Konuşma duyuluyor" to MaterialTheme.colorScheme.primary
+            status.busy -> "Çevriliyor…" to MaterialTheme.colorScheme.primary
+            vm.manualInput -> "Konuşurken düğmeyi basılı tutun" to MaterialTheme.colorScheme.onSurfaceVariant
+            else -> "Dinliyor" to MaterialTheme.colorScheme.onSurfaceVariant
         }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(activity, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-            val mic = when (status.micMode) {
-                MicMode.DUAL -> "🎧+📱"
-                MicMode.SINGLE -> "📱"
-                MicMode.NONE -> ""
-            }
-            Text(mic, style = MaterialTheme.typography.titleMedium)
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Box(
+                Modifier
+                    .size(10.dp)
+                    .clip(CircleShape)
+                    .background(color)
+            )
+            Text(text, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
             if (status.running) {
-                Spacer(Modifier.width(6.dp))
-                TextButton(onClick = vm::requestRepeat, contentPadding = PaddingValues(horizontal = 8.dp)) { Text("Tekrar iste") }
+                val mics = when (status.micMode) {
+                    MicMode.DUAL -> "kulaklık + telefon"
+                    MicMode.SINGLE -> "telefon mikrofonu"
+                    MicMode.NONE -> ""
+                }
+                Text(mics, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
-        if (status.running && !vm.manualInput) {
-            if (status.micMode == MicMode.DUAL) Level("🎧 Siz", status.levelUser)
-            Level(if (status.micMode == MicMode.DUAL) "📱 Karşı" else "📱 Mikrofon", status.levelPartner)
-        }
-        if (status.running && status.micInfo.isNotEmpty()) {
-            Text(status.micInfo, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (status.running && vm.devInfo) {
+            if (!vm.manualInput) {
+                if (status.micMode == MicMode.DUAL) Level("Siz", status.levelUser)
+                Level(if (status.micMode == MicMode.DUAL) "Karşı" else "Mikrofon", status.levelPartner)
+            }
+            if (status.micInfo.isNotEmpty()) {
+                Text(status.micInfo, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
         }
         if (status.running && !status.headsetAttached && status.speakerVolume < 0.5f) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -308,6 +323,7 @@ private fun Conversation(
     modifier: Modifier,
     manual: Boolean,
     qualityModel: Boolean,
+    devInfo: Boolean,
     onRespeak: (Long) -> Unit,
     onEdit: (Utterance) -> Unit,
     onFullscreen: (Utterance) -> Unit,
@@ -333,17 +349,18 @@ private fun Conversation(
         return
     }
     LazyColumn(modifier.fillMaxWidth(), state = listState, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        items(items, key = { it.id }) { Bubble(it, qualityModel, onRespeak, onEdit, onFullscreen, onRequality) }
+        items(items, key = { it.id }) { Bubble(it, qualityModel, devInfo, onRespeak, onEdit, onFullscreen, onRequality) }
     }
 }
 
 @Composable
 private fun Bubble(
-    u: Utterance, qualityModel: Boolean,
+    u: Utterance, qualityModel: Boolean, devInfo: Boolean,
     onRespeak: (Long) -> Unit, onEdit: (Utterance) -> Unit, onFullscreen: (Utterance) -> Unit, onRequality: (Long) -> Unit,
 ) {
     val mine = u.speaker == Speaker.USER
     if (u.state == UtteranceState.DROPPED) {
+        if (!devInfo) return
         Text(
             "· ${u.note ?: "atlandı"}${u.text?.let { ": $it" } ?: ""}",
             style = MaterialTheme.typography.bodySmall,
@@ -367,9 +384,9 @@ private fun Bubble(
                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     val src = langName(u.sourceLang)
                     val dst = langName(u.targetLang)
+                    val marks = (if (u.typed) " ✎" else "") + (if (u.quality) " ✦" else "")
                     Text(
-                        (if (mine) "Siz" else "Karşı taraf") + (if (u.typed) " ✎" else "") + (if (u.quality) " ✦" else "") +
-                            (if (src.isNotEmpty()) " · $src" else "") + (if (dst.isNotEmpty()) " → $dst" else ""),
+                        (if (mine) "Siz → $dst" else "Karşı taraf · $src") + marks,
                         style = MaterialTheme.typography.labelMedium,
                         color = onBubbleMuted,
                     )
@@ -390,12 +407,13 @@ private fun Bubble(
                             color = onBubble,
                         )
                     }
-                    val timing = listOfNotNull(
+                    // Müşteri yalnızca anlamlı notları görür; süreler ve dil tespiti geliştirici bilgisi.
+                    val timing = if (!devInfo) null else listOfNotNull(
                         u.asrMs?.let { "yazı ${sec(it)}" },
                         u.mtMs?.let { "çeviri ${sec(it)}" },
                         u.latencyMs?.let { "ses ${sec(it)}" },
-                    ).joinToString(" · ")
-                    val footer = listOfNotNull(timing.takeIf { it.isNotEmpty() }, u.note, stateText(u.state)).joinToString(" · ")
+                    ).joinToString(" · ").takeIf { it.isNotEmpty() }
+                    val footer = listOfNotNull(timing, u.note, if (devInfo) u.detail else null, stateText(u.state)).joinToString(" · ")
                     if (footer.isNotEmpty()) Text(footer, style = MaterialTheme.typography.bodySmall, color = onBubbleMuted)
                 }
             }
@@ -435,7 +453,7 @@ private fun HoldButton(
     val haptic = LocalHapticFeedback.current
     Box(
         modifier
-            .height(96.dp)
+            .height(84.dp)
             .clip(RoundedCornerShape(20.dp))
             .background(if (active) color.copy(alpha = 0.55f) else color)
             .semantics { role = Role.Button }
@@ -593,6 +611,10 @@ private fun SettingsSheet(vm: ConversationViewModel, onClose: () -> Unit, onFixB
                 "Hoparlör sesi: kulaklık takılıyken ses tuşu kulaklığın sesini ayarlar. Hoparlörün sesini kulaklığı çıkarıp ayarlayın.",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Geliştirici bilgileri (süreler, dil tespiti, ses seviyeleri)", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                Switch(checked = vm.devInfo, onCheckedChange = vm::chooseDevInfo)
+            }
             if (vm.setup.batteryRestricted) TextButton(onClick = { onClose(); onFixBattery() }) { Text("Pil kısıtlamasını kaldır") }
         }
     }
