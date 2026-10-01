@@ -73,7 +73,7 @@ Süreler arka planda işlemciyi %100-370 kullanan bir uygulamayla ölçüldü; t
 - **Whisper small, kısaltılmış bağlam (ses + 1 sn), flash attention kapalı:** 3-5 sn'lik cümlede dil tespiti + yazıya dökme toplam 0,7-0,9 sn (kodlayıcı bir kez çalışıyor).
   - Türkçe CER %4,6 (8 cümle).
   - İngilizce, İspanyolca, Arapça, Fransızca, Rusça, Endonezce %0; Portekizce %2, Hintçe %10, Çince %14. Dil tespiti 17/18.
-  - Almanca %1,5, İtalyanca %0, Hollandaca %6, Lehçe %2, Çekçe %3, Ukraynaca %0, Japonca %4, Korece %6 (hepsi 0,6-0,9 sn, dil tespiti dahil). Ukraynaca dil tespitinde Rusça sanılıyor (%91); elle seçilince yazı hatasız.
+  - Almanca %1,5, İtalyanca %0, Hollandaca %6, Lehçe %2, Çekçe %3, Ukraynaca %0, Japonca %4, Korece %6 (hepsi 0,6-0,9 sn, dil tespiti dahil). Ukraynaca dil tespitinde Rusça sanılıyor (%91); elle seçilince yazı hatasız. Çeviri (Hy-MT2) bu dillerde ön planda 1,5-2,3 sn; arka planda ekran kapalıyken ölçülen 5-15 sn sistem kısıtlamasından (ön plan hizmeti olmadan çalıştırılmıştı).
   - Bengalce: Whisper small Bengalceyi Devanagari harfleriyle yazıyor; Bengal alfabesine çevriliyor ama ses hataları yüzünden çeviri güvenilmez. Dil tespiti Bengalceyi Hintçe sanıyor; elle seçilmeli. Türkçe → Bengalce yönü sorunsuz.
 - **whisper.cpp flash attention hatası:** açıkken kodlayıcı ve çapraz dikkat bağlamı 256'nın katına dolduruyor ama dolguyu maskelemiyor. Kısaltılmış bağlam 256'nın katı değilse model önceki seslerden kalan verilere de bakıyor; Türkçe CER %3'ten %20-45'e çıkıyordu. Bu yüzden kapalı (`asr/Whisper.kt`).
 - **Döngü:** kısaltılmış bağlamda Whisper bazen cümleyi bitirip baştan tekrar ediyor. Son 6 belirteç daha önce geçtiyse çözme kesiliyor; cümle yarıda kaldıysa 768'lik bağlamla bir kez daha çözülüyor.
