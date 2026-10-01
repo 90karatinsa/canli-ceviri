@@ -15,6 +15,31 @@ data class Lang(
     val repeatRequest: String,
     /** Yazı kutusunun ipucu ("Buraya yazın"). */
     val typeHint: String,
+) {
+    /** Whisper'a verilen seyahat sözlüğü istemi: bu kelimeleri doğru yazdırır (dil tespitini etkilemez). */
+    val glossary: String get() = GLOSSARY[code] ?: ""
+}
+
+private val GLOSSARY = mapOf(
+    "tr" to "Pasaport, bagaj, biniş kartı, uçuş, rezervasyon, otel, taksi, tren istasyonu, eczane, hastane, karakol, cüzdan, kredi kartı, hesap.",
+    "en" to "Passport control, boarding pass, luggage, flight, reservation, hotel, taxi, train station, pharmacy, hospital, police station, wallet, credit card, the bill.",
+    "zh" to "护照检查、登机牌、行李、航班、预订、酒店、出租车、火车站、药店、医院、警察局、钱包、信用卡、账单。",
+    "hi" to "पासपोर्ट जाँच, बोर्डिंग पास, सामान, उड़ान, आरक्षण, होटल, टैक्सी, रेलवे स्टेशन, दवाखाना, अस्पताल, पुलिस स्टेशन, बटुआ, क्रेडिट कार्ड, बिल।",
+    "es" to "Control de pasaportes, tarjeta de embarque, equipaje, vuelo, reserva, hotel, taxi, estación de tren, farmacia, hospital, comisaría, cartera, tarjeta de crédito, la cuenta.",
+    "ar" to "مراقبة الجوازات، بطاقة الصعود، الأمتعة، الرحلة، الحجز، الفندق، التاكسي، محطة القطار، الصيدلية، المستشفى، مركز الشرطة، المحفظة، بطاقة الائتمان، الفاتورة.",
+    "fr" to "Contrôle des passeports, carte d'embarquement, bagages, vol, réservation, hôtel, taxi, gare, pharmacie, hôpital, commissariat, portefeuille, carte de crédit, l'addition.",
+    "bn" to "পাসপোর্ট চেক, বোর্ডিং পাস, লাগেজ, ফ্লাইট, রিজার্ভেশন, হোটেল, ট্যাক্সি, রেলস্টেশন, ফার্মেসি, হাসপাতাল, থানা, মানিব্যাগ, ক্রেডিট কার্ড, বিল।",
+    "pt" to "Controle de passaportes, cartão de embarque, bagagem, voo, reserva, hotel, táxi, estação de trem, farmácia, hospital, delegacia, carteira, cartão de crédito, a conta.",
+    "ru" to "Паспортный контроль, посадочный талон, багаж, рейс, бронирование, отель, такси, вокзал, аптека, больница, полиция, кошелёк, кредитная карта, счёт.",
+    "id" to "Pemeriksaan paspor, boarding pass, bagasi, penerbangan, reservasi, hotel, taksi, stasiun kereta, apotek, rumah sakit, kantor polisi, dompet, kartu kredit, tagihan.",
+    "de" to "Passkontrolle, Bordkarte, Gepäck, Flug, Reservierung, Hotel, Taxi, Bahnhof, Apotheke, Krankenhaus, Polizeiwache, Geldbörse, Kreditkarte, die Rechnung.",
+    "it" to "Controllo passaporti, carta d'imbarco, bagaglio, volo, prenotazione, hotel, taxi, stazione, farmacia, ospedale, commissariato, portafoglio, carta di credito, il conto.",
+    "nl" to "Paspoortcontrole, instapkaart, bagage, vlucht, reservering, hotel, taxi, treinstation, apotheek, ziekenhuis, politiebureau, portemonnee, creditcard, de rekening.",
+    "pl" to "Kontrola paszportowa, karta pokładowa, bagaż, lot, rezerwacja, hotel, taksówka, dworzec, apteka, szpital, komisariat, portfel, karta kredytowa, rachunek.",
+    "cs" to "Pasová kontrola, palubní vstupenka, zavazadlo, let, rezervace, hotel, taxi, nádraží, lékárna, nemocnice, policejní stanice, peněženka, kreditní karta, účet.",
+    "uk" to "Паспортний контроль, посадковий талон, багаж, рейс, бронювання, готель, таксі, вокзал, аптека, лікарня, поліція, гаманець, кредитна картка, рахунок.",
+    "ja" to "パスポート検査、搭乗券、荷物、フライト、予約、ホテル、タクシー、駅、薬局、病院、警察署、財布、クレジットカード、お会計。",
+    "ko" to "여권 심사, 탑승권, 수하물, 항공편, 예약, 호텔, 택시, 기차역, 약국, 병원, 경찰서, 지갑, 신용카드, 계산서.",
 )
 
 object Languages {

@@ -78,6 +78,10 @@ class ConversationEngine(private val context: Context, private val scope: Corout
         val quality: Boolean = false,
         /** Sesli okuma. Dinleme modunda kulaklık yoksa zaten okunmaz (hoparlör mikrofonu kapatırdı). */
         val readAloud: ReadAloud = ReadAloud.ALWAYS,
+        /** Telefon mikrofonuna sistemin gürültü bastırma ve otomatik kazanç efektleri. */
+        val enhance: Boolean = true,
+        /** Whisper'a seyahat sözlüğü istemi (dil başına sabit kelimeler). */
+        val glossary: Boolean = true,
     )
 
     /** İşçinin sırayla işlediği işler: ses parçası, yazılan metin, tekrar okuma, düzeltme. */
@@ -358,7 +362,7 @@ class ConversationEngine(private val context: Context, private val scope: Corout
         applyModelPolicy()
 
         val preferDual = settings.preferDual && settings.mode == Mode.CONVERSATION
-        val mode = front.start(preferDual) { frames -> onFrames(frames) }
+        val mode = front.start(preferDual, settings.enhance) { frames -> onFrames(frames) }
         if (mode == MicMode.NONE) {
             _status.update { it.copy(running = false, micMode = mode, error = front.info) }
             return
@@ -418,7 +422,7 @@ class ConversationEngine(private val context: Context, private val scope: Corout
         val preferDual = settings.preferDual && settings.mode == Mode.CONVERSATION
         repeat(3) { attempt ->
             front.stop()
-            val mode = front.start(preferDual) { frames -> onFrames(frames) }
+            val mode = front.start(preferDual, settings.enhance) { frames -> onFrames(frames) }
             if (mode != MicMode.NONE) {
                 delay(300)
                 if (!front.anySilenced()) {
@@ -963,12 +967,16 @@ class ConversationEngine(private val context: Context, private val scope: Corout
             }
             val maxTokens = max(24, (audioMs / 1000f * 15).toInt() + 10)
             val turkish = lang == "tr"
+            // İstem: Türkçede nötr cümle (+ sözlük), diğer dillerde yalnızca seyahat sözlüğü.
+            val glossary = if (settings.glossary) Languages.ALL.firstOrNull { it.code == lang }?.glossary?.takeIf { it.isNotEmpty() } else null
+            val prompt = listOfNotNull(if (turkish && settings.promptTurkish) WhisperModel.TURKISH_PROMPT else null, glossary)
+                .joinToString(" ").ifEmpty { null }
             val r = w.transcribeWithRetry(
                 pcm, lang, threadsNow,
                 audioCtx = audioCtxFor(pcm),
                 beam = if (turkish) settings.beamTurkish else settings.beamForeign,
                 maxTokens = maxTokens,
-                prompt = if (turkish && settings.promptTurkish) WhisperModel.TURKISH_PROMPT else null,
+                prompt = prompt,
                 fallback = settings.fallback,
             )
             val asrMs = System.currentTimeMillis() - seg.endedAt

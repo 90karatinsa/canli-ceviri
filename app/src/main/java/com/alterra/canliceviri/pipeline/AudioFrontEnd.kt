@@ -34,7 +34,10 @@ class AudioFrontEnd(private val context: Context) {
     private var pump: Thread? = null
 
     /** Engellenir (~0,5 sn); ana iş parçacığında çağırmayın. */
-    fun start(preferDual: Boolean, onFrames: (Frames) -> Unit): MicMode {
+    fun start(preferDual: Boolean, onFrames: (Frames) -> Unit): MicMode = start(preferDual, enhance = false, onFrames)
+
+    /** [enhance]: telefon mikrofonuna sistemin gürültü bastırma ve otomatik kazanç efektleri (kulaklık mikrofonunda sistem zaten uyguluyor). */
+    fun start(preferDual: Boolean, enhance: Boolean, onFrames: (Frames) -> Unit): MicMode {
         stop()
         qUser.clear()
         qPartner.clear()
@@ -43,7 +46,7 @@ class AudioFrontEnd(private val context: Context) {
 
         if (headset != null && builtin != null) {
             val u = MicCapture("kullanici", headset, MediaRecorder.AudioSource.VOICE_COMMUNICATION, onFrame = { offer(qUser, it) })
-            val p = MicCapture("karsi", builtin, MediaRecorder.AudioSource.VOICE_RECOGNITION, onFrame = { offer(qPartner, it) })
+            val p = MicCapture("karsi", builtin, MediaRecorder.AudioSource.VOICE_RECOGNITION, enhance = enhance, onFrame = { offer(qPartner, it) })
             if (u.start() && p.start()) {
                 Thread.sleep(400)
                 val ru = u.routedDevice
@@ -68,7 +71,7 @@ class AudioFrontEnd(private val context: Context) {
         if (mode != MicMode.DUAL) {
             qUser.clear()
             qPartner.clear()
-            val p = MicCapture("tek", builtin, MediaRecorder.AudioSource.VOICE_RECOGNITION, onFrame = { offer(qPartner, it) })
+            val p = MicCapture("tek", builtin, MediaRecorder.AudioSource.VOICE_RECOGNITION, enhance = enhance, onFrame = { offer(qPartner, it) })
             if (!p.start()) {
                 mode = MicMode.NONE
                 info = "Mikrofon açılamadı: ${p.error}"
@@ -76,7 +79,8 @@ class AudioFrontEnd(private val context: Context) {
             }
             capPartner = p
             mode = MicMode.SINGLE
-            info = if (headset != null) "Tek mikrofon (telefon); kulaklık mikrofonu aynı anda açılamadı" else "Tek mikrofon (telefon)"
+            info = (if (headset != null) "Tek mikrofon (telefon); kulaklık mikrofonu aynı anda açılamadı" else "Tek mikrofon (telefon)") +
+                " · efekt: ${p.effectsInfo}"
         }
 
         running = true

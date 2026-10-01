@@ -25,6 +25,8 @@ Hedef cihaz Samsung Galaxy S24 Ultra; geliştirme Pixel 9 Pro (GrapheneOS) üzer
 |---|---|---|
 | Mikrofon | Kulaklık mikrofonu ("görüşme" türü) + telefon mikrofonu ("tanıma" türü); olmazsa tek mikrofon | `pipeline/AudioFrontEnd.kt` |
 | Konuşma algılama | Silero VAD (whisper.cpp içinden, 32 ms çerçeve) | `pipeline/Segmenter.kt` |
+| Mikrofon efektleri | Telefon mikrofonuna sistemin gürültü bastırma + otomatik kazanç efektleri (ayarla kapatılabilir); kulaklık mikrofonunda VOICE_COMMUNICATION kaynağı zaten uyguluyor | `audio/MicCapture.kt` |
+| Whisper istemi | Türkçede nötr cümle + seyahat sözlüğü; diğer dillerde dil başına seyahat sözlüğü (`Lang.glossary`). Ölçümde `sozluk=1` ile açılır; test cümleleri sözlük kelimeleri içerdiği için o ölçüm iyimserdir | `Languages.kt`, `ConversationEngine.processAudio` |
 | Kim konuştu | Çift mikrofonda iki kaydın seviye farkı; tek mikrofonda dil (Türkçe mi) | `pipeline/ConversationEngine.kt` |
 | Yazıya dökme | Whisper small (q8_0), whisper.cpp (yamalı), telefonun işlemcisinde | `app/src/main/cpp/whisper_jni.cpp`, `asr/` |
 | Çeviri | Tencent Hy-MT2-1.8B (Q4_K_M, 1,1 GB), llama.cpp, telefonun işlemcisinde; Google servisi ve telemetri yok. İsteğe bağlı Hy-MT2-7B (Q4_K_M, 4,6 GB): "kaliteli" mod, yazılı metin, düzeltme ve baloncuktan "kaliteli çevir". Kaliteli modda 1,8B bırakılır; hızlı modda 7B 3 dk boşta kalınca ya da bellek daralınca bırakılır | `llm/` modülü, `pipeline/ConversationEngine.kt` |

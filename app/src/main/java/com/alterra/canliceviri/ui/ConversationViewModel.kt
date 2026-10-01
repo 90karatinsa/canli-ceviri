@@ -63,6 +63,13 @@ class ConversationViewModel(app: Application) : AndroidViewModel(app) {
     var quality by mutableStateOf(prefs.quality); private set
     var devInfo by mutableStateOf(prefs.devInfo); private set
     var readAloud by mutableStateOf(prefs.readAloud); private set
+    var enhance by mutableStateOf(prefs.enhance); private set
+
+    /** Bir sonraki Başlat'ta uygulanır (mikrofon açılırken). */
+    fun chooseEnhance(v: Boolean) {
+        enhance = v
+        prefs.enhance = v
+    }
 
     fun chooseReadAloud(v: ReadAloud) {
         readAloud = v
@@ -259,7 +266,7 @@ class ConversationViewModel(app: Application) : AndroidViewModel(app) {
             android.util.Log.i("CanliCeviri", "simülasyon: ${clips.size} ses, ${typed.size} metin, seçenekler=$options, liste=$list")
             if (clips.isEmpty() && typed.isEmpty()) return@launch
             val quality = options["kalite"] == "1"
-            engine.simulate(clips, ConversationEngine.Settings(mode = mode, manual = manual, quality = quality, readAloud = readAloud), dual, typed)
+            engine.simulate(clips, ConversationEngine.Settings(mode = mode, manual = manual, quality = quality, readAloud = readAloud, enhance = enhance), dual, typed)
         }
     }
 

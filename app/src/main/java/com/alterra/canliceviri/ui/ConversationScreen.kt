@@ -618,6 +618,10 @@ private fun SettingsSheet(vm: ConversationViewModel, onClose: () -> Unit, onFixB
             }
 
             Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Telefon mikrofonunda gürültü bastırma (Başlat'ta uygulanır)", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                Switch(checked = vm.enhance, onCheckedChange = vm::chooseEnhance)
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("Sorun bildirimine son konuşmaların sesini ekle", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
                 Switch(checked = vm.attachAudio, onCheckedChange = vm::chooseAttachAudio)
             }

@@ -53,7 +53,9 @@ Düğme basılıyken başka hiçbir şey dinlenmez; en çok 20 saniye.
 
 ⋮ → **Sorun bildir**: ne olduğunu kısaca yazın, **WhatsApp'tan gönder**'e basın. Son konuşmalar, süreler ve (açıksa) son konuşmaların ses kaydı bize gelir; WhatsApp'ta geliştirici seçili gelmezse listeden seçip gönderin. Ses kaydını ⋮ → Ayarlar'dan kapatabilirsiniz.
 
-Ayarlar'da ayrıca **Sesli okuma** (her zaman / yalnızca konuşmada / kapalı) ve **Okuma hızı: Yavaş** seçenekleri var.
+Ayarlar'da ayrıca **Sesli okuma** (her zaman / yalnızca konuşmada / kapalı), **Okuma hızı: Yavaş** ve **Gürültü bastırma** (telefon mikrofonu; kalabalık yerde açık kalsın, sessiz odada yazı bozuluyorsa kapatıp Başlat'a yeniden basın) seçenekleri var.
+
+**Daha iyi duyması için:** telefonun alt ucu karşınızdakine dönük ve yarım metreden yakın olsun; kendi sesiniz için kulaklık mikrofonunu kullanın; ülkeye varınca dili elle seçin.
 
 ## Kaliteli çeviri (isteğe bağlı, önerilir)
 

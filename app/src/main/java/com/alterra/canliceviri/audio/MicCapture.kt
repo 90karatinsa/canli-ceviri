@@ -6,6 +6,10 @@ import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.AudioRouting
 import android.media.MediaRecorder
+import android.media.audiofx.AudioEffect
+import android.media.audiofx.AutomaticGainControl
+import android.media.audiofx.NoiseSuppressor
+import android.util.Log
 import android.os.Handler
 import android.os.Looper
 import android.os.Process
@@ -25,8 +29,14 @@ class MicCapture(
     val frameSamples: Int = 512,
     /** 1 = mono, 2 = stereo (telefonun iki mikrofonu; örnekler L,R,L,R… sırasıyla gelir). */
     val channels: Int = 1,
+    /** Sistemin gürültü bastırma ve otomatik kazanç efektleri (varsa) bu kayda uygulansın. */
+    private val enhance: Boolean = false,
     private val onFrame: ((ShortArray) -> Unit)? = null,
 ) {
+    /** Uygulanan efektler ("gürültü bastırma, otomatik kazanç" / "yok"). */
+    @Volatile var effectsInfo: String = "yok"; private set
+    private val effects = ArrayList<AudioEffect>()
+
     @Volatile var routedDevice: AudioDeviceInfo? = null; private set
     @Volatile var error: String? = null; private set
 
@@ -101,6 +111,7 @@ class MicCapture(
         }
         record = rec
         sessionId = rec.audioSessionId
+        if (enhance) attachEffects(sessionId)
         rec.routedDevice?.let { routedDevice = it }
         wav = recordTo?.let { WavWriter(it, sampleRate, channels) }
         running = true
@@ -144,7 +155,29 @@ class MicCapture(
         }
     }
 
+    private fun attachEffects(session: Int) {
+        val applied = ArrayList<String>()
+        fun add(name: String, effect: AudioEffect?) {
+            if (effect == null) return
+            if (effect.setEnabled(true) == AudioEffect.SUCCESS) {
+                effects += effect
+                applied += name
+            } else {
+                effect.release()
+            }
+        }
+        try {
+            if (NoiseSuppressor.isAvailable()) add("gürültü bastırma", NoiseSuppressor.create(session))
+            if (AutomaticGainControl.isAvailable()) add("otomatik kazanç", AutomaticGainControl.create(session))
+        } catch (e: Exception) {
+            Log.w("CanliCeviri", "ses efekti uygulanamadı", e)
+        }
+        effectsInfo = applied.ifEmpty { listOf("yok") }.joinToString(", ")
+    }
+
     fun stop() {
+        effects.forEach { runCatching { it.release() } }
+        effects.clear()
         running = false
         val rec = record
         record = null

@@ -38,6 +38,11 @@ class Prefs(context: Context) {
             .getOrDefault(com.alterra.canliceviri.pipeline.ReadAloud.ALWAYS)
         set(v) = p.edit().putString("sesli_okuma", v.name).apply()
 
+    /** Telefon mikrofonunda gürültü bastırma ve otomatik kazanç. */
+    var enhance: Boolean
+        get() = p.getBoolean("gurultu_bastirma", true)
+        set(v) = p.edit().putBoolean("gurultu_bastirma", v).apply()
+
     /** Geliştirici bilgileri: süreler, dil tespiti, seviye çubukları ekranda görünsün. */
     var devInfo: Boolean
         get() = p.getBoolean("gelistirici", false)

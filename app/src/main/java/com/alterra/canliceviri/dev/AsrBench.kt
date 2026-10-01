@@ -33,6 +33,8 @@ object AsrBench {
         val prompt: Boolean,
         /** Takılmada sıcaklık artışı (0 = kapalı). */
         val fallbacks: List<Float>,
+        /** Seyahat sözlüğü istemi (uygulamadaki gibi) eklensin mi. Test cümleleri sözlük kelimeleri içerdiği için ölçüm iyimser olur. */
+        val glossary: Boolean,
     )
 
     private const val TURKISH_PROMPT = WhisperModel.TURKISH_PROMPT
@@ -50,6 +52,7 @@ object AsrBench {
             langs = opts["diller"]?.split(',')?.map { it.trim() }?.toSet() ?: emptySet(),
             prompt = opts["istem"] == "1",
             fallbacks = opts["kurtarma"]?.split(',')?.mapNotNull { it.toFloatOrNull() } ?: listOf(0f),
+            glossary = opts["sozluk"] == "1",
         )
     }
 
@@ -111,7 +114,7 @@ object AsrBench {
                 continue
             }
             emit("")
-            emit("== ${file.name} · yükleme ${SystemClock.elapsedRealtime() - t0} ms · flash=${spec.flash} istem=${spec.prompt}")
+            emit("== ${file.name} · yükleme ${SystemClock.elapsedRealtime() - t0} ms · flash=${spec.flash} istem=${spec.prompt} sözlük=${spec.glossary}")
             model.use { m ->
                 // Isınma: ilk çağrı bellek ayırdığı için ölçüme katılmıyor.
                 m.transcribe(FloatArray(16_000), "en", spec.threads.first(), audioCtx = 128, beam = 1, maxTokens = 4)
@@ -130,7 +133,8 @@ object AsrBench {
                         val guess = m.detectLanguage(pcm, candidates, threads, audioCtx)
                         val best = guess?.best
                         if (best?.first == lang) lidOk++
-                        val prompt = if (spec.prompt && lang == "tr") TURKISH_PROMPT else null
+                        val glossary = if (spec.glossary) Languages.ALL.firstOrNull { it.code == lang }?.glossary?.takeIf { it.isNotEmpty() } else null
+                        val prompt = listOfNotNull(if (spec.prompt && lang == "tr") TURKISH_PROMPT else null, glossary).joinToString(" ").ifEmpty { null }
                         val r = m.transcribeWithRetry(pcm, lang, threads, audioCtx, beam, prompt = prompt, fallback = fb)
                         // Uygulamadaki gibi: art arda tekrarlanan cümle silinir; CER ekranda görünecek metinle.
                         val text = TextFilters.collapseRepeats(r.text).let { if (lang == "bn") TextFilters.devanagariToBengali(it) else it }
