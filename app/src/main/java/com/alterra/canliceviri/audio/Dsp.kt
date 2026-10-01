@@ -9,6 +9,25 @@ import kotlin.math.sqrt
 
 /** Küçük sinyal işleme yardımcıları. Seviyeler dBFS (tam ölçek = 0 dB). */
 object Dsp {
+
+    /**
+     * Kazanç uygular; 0,85 tam ölçeğin üstünü yumuşakça sıkıştırır (tanh benzeri), böylece tıkırtı olmaz.
+     * Yeni dizi döndürür.
+     */
+    fun boost(pcm: ShortArray, gain: Float): ShortArray {
+        val knee = 0.85f
+        return ShortArray(pcm.size) { i ->
+            val x = pcm[i] / 32768f * gain
+            val a = kotlin.math.abs(x)
+            val y = if (a <= knee) x else {
+                val over = (a - knee) / (1f - knee) // 0..∞
+                val soft = knee + (1f - knee) * (over / (1f + over))
+                if (x < 0) -soft else soft
+            }
+            (y * 32767f).toInt().coerceIn(-32768, 32767).toShort()
+        }
+    }
+
     const val FLOOR_DB = -120f
 
     /** Çerçevenin ortalama gücü, tam ölçeğe göre (0..1). */

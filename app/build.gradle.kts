@@ -1,7 +1,16 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
+}
+
+/** local.properties'ten (git dışı) değer; yoksa boş. */
+fun localProperty(name: String): String {
+    val file = rootProject.file("local.properties")
+    if (!file.exists()) return ""
+    return Properties().apply { file.inputStream().use { load(it) } }.getProperty(name, "")
 }
 
 android {
@@ -13,8 +22,11 @@ android {
         applicationId = "com.alterra.canliceviri"
         minSdk = 26
         targetSdk = 36
-        versionCode = 4
-        versionName = "0.4.0"
+        versionCode = 5
+        versionName = "0.5.0"
+
+        // Sorun bildiriminin gideceği WhatsApp numarası (ülke koduyla, + olmadan); local.properties'te `rapor.whatsapp=905…`.
+        buildConfigField("String", "RAPOR_WHATSAPP", "\"${localProperty("rapor.whatsapp")}\"")
 
         ndk {
             // Hedef telefonlar 64-bit ARM; diğer mimariler APK'yı gereksiz büyütür.

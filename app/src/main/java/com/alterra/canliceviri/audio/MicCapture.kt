@@ -40,6 +40,9 @@ class MicCapture(
 
     /** Tamamen sıfır gelen çerçeveler; sistem kaydı susturunca böyle olur. */
     @Volatile var zeroFrames: Long = 0; private set
+
+    /** Art arda gelen tamamen sıfır çerçeve sayısı: sistem kaydı susturduysa (arama) hep sıfır gelir. */
+    @Volatile var zeroRun: Int = 0; private set
     var sessionId: Int = 0; private set
 
     private var record: AudioRecord? = null
@@ -128,7 +131,12 @@ class MicCapture(
             levelDb = db
             smoothDb = Dsp.powerToDb(smoothPower)
             if (db > maxDb) maxDb = db
-            if (Dsp.isAllZero(buf)) zeroFrames++
+            if (Dsp.isAllZero(buf)) {
+                zeroFrames++
+                zeroRun++
+            } else {
+                zeroRun = 0
+            }
             framesRead++
             wav?.write(buf)
             onFrame?.invoke(buf.copyOf())

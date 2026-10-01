@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths>
     <external-files-path name="kayitlar" path="kayitlar/" />
+    <external-files-path name="sorun" path="sorun/" />
     <cache-path name="gecici" path="." />
 </paths>

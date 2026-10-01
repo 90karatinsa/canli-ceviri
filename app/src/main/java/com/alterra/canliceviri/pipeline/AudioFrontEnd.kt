@@ -109,6 +109,26 @@ class AudioFrontEnd(private val context: Context) {
         return am.activeRecordingConfigurations.firstOrNull { it.clientAudioSessionId == c.sessionId }?.isClientSilenced == true
     }
 
+    /**
+     * Kayıtlardan biri sistemce susturulmuş mu (arama, başka uygulama)? Resmi bayrak yoksa (eski HAL) 1 sn boyunca
+     * tamamen sıfır çerçeve gelmesi de susturulmuş sayılır.
+     */
+    fun anySilenced(): Boolean {
+        val caps = listOfNotNull(capUser, capPartner)
+        if (caps.isEmpty()) return false
+        if (caps.any { it.zeroRun >= ZERO_RUN_SILENCED }) return true
+        if (Build.VERSION.SDK_INT < 29) return false
+        val configs = AudioDevices.audioManager(context).activeRecordingConfigurations
+        return caps.any { c -> configs.firstOrNull { it.clientAudioSessionId == c.sessionId }?.isClientSilenced == true }
+    }
+
+    /** Çift mikrofonda iki kayıt aynı cihaza düşmüş (kulaklık çıktı, arama sonrası yönlendirme değişti). */
+    fun routedSame(): Boolean {
+        val a = capUser?.routedDevice ?: return false
+        val b = capPartner?.routedDevice ?: return false
+        return a.id == b.id
+    }
+
     /** Kuyruk dolarsa (işleyici geride kaldıysa) en eski çerçeveyi at. */
     private fun offer(q: ArrayBlockingQueue<ShortArray>, frame: ShortArray) {
         while (!q.offer(frame)) q.poll()
@@ -124,5 +144,6 @@ class AudioFrontEnd(private val context: Context) {
     companion object {
         private const val TAG = "CanliCeviri"
         private const val QUEUE = 64 // ~2 sn
+        private const val ZERO_RUN_SILENCED = 31 // 1 sn
     }
 }

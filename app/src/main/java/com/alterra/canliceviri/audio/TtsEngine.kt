@@ -43,6 +43,9 @@ class TtsEngine(private val context: Context) {
 
     private var tts: TextToSpeech? = null
     var enginePackage: String? = null; private set
+
+    /** Okuma hızı (1,0 normal, 0,8 yavaş); her sentezden önce motora verilir. */
+    @Volatile var speechRate: Float = 1f
     @Volatile var ready = false; private set
     private val pending = ConcurrentHashMap<String, Utterance>()
 
@@ -145,6 +148,7 @@ class TtsEngine(private val context: Context) {
                 return
             }
         }
+        t.setSpeechRate(speechRate)
         val id = UUID.randomUUID().toString()
         val file = File(context.cacheDir, "tts_$id.wav")
         val u = Utterance(file, device, voice?.name, onDone)
@@ -169,6 +173,20 @@ class TtsEngine(private val context: Context) {
         if (t.synthesizeToFile(lang.sample, Bundle(), file, id) != TextToSpeech.SUCCESS) {
             pending.remove(id)
             u.fail("ısınma başlatılamadı")
+        }
+    }
+
+    /**
+     * Sürmekte olan ve bekleyen tüm okumaları hemen keser (arama geldi, kullanıcı düğmeye bastı):
+     * sentez durdurulur, çalma kuyruğu boşaltılır, ses cihazı bırakılır.
+     */
+    fun abort() {
+        val items = pending.values.toList()
+        pending.clear()
+        items.forEach { it.abort() }
+        try {
+            tts?.stop()
+        } catch (_: Exception) {
         }
     }
 
@@ -216,6 +234,7 @@ class TtsEngine(private val context: Context) {
         @Volatile private var channels = 1
         @Volatile private var firstAudioAt = 0L
         @Volatile private var finished = false
+        @Volatile private var aborted = false
         private var carry: ByteArray? = null
         private var player: Thread? = null
 
@@ -225,10 +244,13 @@ class TtsEngine(private val context: Context) {
             channels = channelCount.coerceAtLeast(1)
         }
 
+        /** Hoparlörde Google TTS'in çıkışı kısık kalıyor; yumuşak sınırlayıcıyla yükseltiliyor. */
+        private val boost = device?.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER
+
         fun audio(bytes: ByteArray) {
-            if (!play || sampleRate <= 0) return
+            if (!play || aborted || sampleRate <= 0) return
             if (firstAudioAt == 0L) firstAudioAt = SystemClock.elapsedRealtime()
-            val pcm = toPcm16(bytes)
+            val pcm = toPcm16(bytes).let { if (boost) Dsp.boost(it, SPEAKER_GAIN) else it }
             if (player == null) {
                 val rate = sampleRate
                 player = thread(name = "tts-cal") { playLoop(rate) }
@@ -240,11 +262,23 @@ class TtsEngine(private val context: Context) {
             val p = PcmPlayer(rate, device)
             while (true) {
                 val chunk = queue.take()
-                if (chunk === END) break
+                if (chunk === END || aborted) break
                 p.write(chunk)
+            }
+            if (aborted) {
+                p.release()
+                return
             }
             p.finish()
             complete(true, p.routedDevice, streamed = true, error = null)
+        }
+
+        /** Hemen kes: kuyruk boşalır, çalan ses cihazı bırakılır, sonuç "iptal" olarak döner. */
+        fun abort() {
+            aborted = true
+            queue.clear()
+            queue.put(END)
+            complete(false, null, streamed = player != null, error = "iptal edildi")
         }
 
         fun done() {
@@ -258,14 +292,14 @@ class TtsEngine(private val context: Context) {
             }
             // Motor parça parça ses vermediyse dosyadan oku ve çal.
             thread(name = "tts-dosya") {
-                val pcm = WavReader.read(file)
+                val pcm = if (aborted) null else WavReader.read(file)
                 if (pcm == null || pcm.samples.isEmpty()) {
                     complete(false, null, streamed = false, error = "ses dosyası okunamadı")
                     return@thread
                 }
                 if (firstAudioAt == 0L) firstAudioAt = SystemClock.elapsedRealtime()
                 val p = PcmPlayer(pcm.sampleRate, device)
-                p.write(pcm.samples)
+                p.write(if (boost) Dsp.boost(pcm.samples, SPEAKER_GAIN) else pcm.samples)
                 p.finish()
                 complete(true, p.routedDevice, streamed = false, error = null)
             }
@@ -325,6 +359,9 @@ class TtsEngine(private val context: Context) {
 
     companion object {
         private val END = ShortArray(0)
+
+        /** Hoparlör bacağı kazancı (~+5 dB); tepe yumuşak sınırlayıcıyla 0 dBFS'i aşmaz. */
+        private const val SPEAKER_GAIN = 1.8f
 
         /** Android'in eski dil kodlarını ve Google TTS'in "cmn" kodunu ISO 639-1'e çevirir. */
         fun normLang(code: String): String = when (code.lowercase(Locale.ROOT)) {

@@ -32,6 +32,8 @@ data class Utterance(
     /** Konuşma bitişinden çevirinin ilk sesine kadar geçen toplam süre. */
     val latencyMs: Long? = null,
     val note: String? = null,
+    /** Konuşma yerine yazılarak girildi. */
+    val typed: Boolean = false,
 )
 
 data class EngineStatus(
@@ -51,5 +53,11 @@ data class EngineStatus(
     val busy: Boolean = false,
     val partnerLang: String? = null,
     val partnerLangLocked: Boolean = false,
+    /** Bas-konuş: düğme basılı, bu konuşan kaydediliyor. */
+    val recording: Speaker? = null,
+    val recordingSince: Long = 0L,
+    /** Medya ses düzeyi (0..1); kulaklık takılıysa kulaklığınki. */
+    val speakerVolume: Float = 1f,
+    val headsetAttached: Boolean = false,
     val error: String? = null,
 )

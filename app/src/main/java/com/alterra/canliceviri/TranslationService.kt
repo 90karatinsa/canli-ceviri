@@ -15,6 +15,7 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.alterra.canliceviri.pipeline.ConversationEngine
 import com.alterra.canliceviri.pipeline.Mode
+import com.alterra.canliceviri.ui.Prefs
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
@@ -64,8 +65,9 @@ class TranslationService : Service() {
         watchJob?.cancel()
         startJob?.cancel()
         val scope = CanliCeviriApp.of(this).appScope
+        val prefs = Prefs(this)
         startJob = scope.launch {
-            engine.start(ConversationEngine.Settings(mode = mode))
+            engine.start(ConversationEngine.Settings(mode = mode, manual = prefs.manualInput, speechRate = prefs.speechRate, attachAudio = prefs.attachAudio))
             if (!engine.status.value.running) {
                 Log.w(TAG, "motor başlayamadı: ${engine.status.value.error}")
                 stopSelf()

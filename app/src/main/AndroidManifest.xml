@@ -23,6 +23,9 @@
             <action android:name="android.intent.action.TTS_SERVICE" />
         </intent>
         <package android:name="com.google.android.tts" />
+        <!-- Sorun bildirimi WhatsApp'tan gönderiliyor -->
+        <package android:name="com.whatsapp" />
+        <package android:name="com.whatsapp.w4b" />
     </queries>
 
     <application

@@ -2,6 +2,7 @@ package com.alterra.canliceviri.ui
 
 import android.app.Application
 import android.content.Context
+import android.media.AudioManager
 import android.os.PowerManager
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -15,6 +16,7 @@ import com.alterra.canliceviri.audio.WavReader
 import com.alterra.canliceviri.llm.HyMtTranslator
 import com.alterra.canliceviri.pipeline.ConversationEngine
 import com.alterra.canliceviri.pipeline.Mode
+import com.alterra.canliceviri.pipeline.Speaker
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -51,6 +53,9 @@ class ConversationViewModel(app: Application) : AndroidViewModel(app) {
     var partnerLang by mutableStateOf<String?>(prefs.partnerLang); private set
     var setup by mutableStateOf(SetupState()); private set
     var batteryAsked by mutableStateOf(prefs.batteryAsked); private set
+    var manualInput by mutableStateOf(prefs.manualInput); private set
+    var speechRate by mutableStateOf(prefs.speechRate); private set
+    var attachAudio by mutableStateOf(prefs.attachAudio); private set
 
     init {
         engine.setPartnerLanguage(partnerLang)
@@ -96,6 +101,47 @@ class ConversationViewModel(app: Application) : AndroidViewModel(app) {
 
     fun clear() = engine.clearConversation()
 
+    fun chooseManualInput(v: Boolean) {
+        manualInput = v
+        prefs.manualInput = v
+        engine.setManual(v)
+    }
+
+    fun chooseSpeechRate(v: Float) {
+        speechRate = v
+        prefs.speechRate = v
+        engine.setSpeechRate(v)
+    }
+
+    fun chooseAttachAudio(v: Boolean) {
+        attachAudio = v
+        prefs.attachAudio = v
+        engine.setAttachAudio(v)
+    }
+
+    /** Sorun bildirimi için ayar özeti. */
+    fun reportSettings() = com.alterra.canliceviri.report.IssueReport.Settings(
+        mode = mode.name, manualInput = manualInput, partnerLang = partnerLang, speechRate = speechRate, attachAudio = attachAudio,
+        ttsEngine = ttsEnginePackage, missingVoices = setup.missingVoices,
+    )
+
+    fun beginManual(speaker: Speaker) = engine.beginManual(speaker)
+    fun endManual() = engine.endManual()
+    fun submitText(text: String, speaker: Speaker) = engine.submitText(text, speaker)
+    fun respeak(id: Long) = engine.respeak(id)
+    fun edit(id: Long, text: String) = engine.edit(id, text)
+    fun requestRepeat() = engine.requestRepeat()
+
+    /** Hoparlör sesi kısıksa %70'e çıkar (sistem ses penceresi görünür). */
+    fun raiseVolume() {
+        val am = getApplication<Application>().getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        val max = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+        val target = (max * 0.7f).toInt().coerceAtLeast(1)
+        if (am.getStreamVolume(AudioManager.STREAM_MUSIC) < target) {
+            am.setStreamVolume(AudioManager.STREAM_MUSIC, target, AudioManager.FLAG_SHOW_UI)
+        }
+    }
+
     fun refreshSetup() {
         val pm = getApplication<Application>().getSystemService(Context.POWER_SERVICE) as PowerManager
         val restricted = !pm.isIgnoringBatteryOptimizations(getApplication<Application>().packageName)
@@ -137,7 +183,8 @@ class ConversationViewModel(app: Application) : AndroidViewModel(app) {
     /**
      * Geliştirici: test seslerini mikrofon yerine motora verir (konuşmadan uçtan uca ölçüm).
      * adb shell am start --activity-single-top -n com.alterra.canliceviri/.MainActivity --es simule "tr1,en,tr3"
-     * "cift:" ile başlarsa çift mikrofon; "karsi=bn;bn,tr1" karşı tarafın dilini elle seçer.
+     * "cift:" ile başlarsa çift mikrofon; "dugme:" ile başlarsa her ses bir düğme basışı (bas-konuş);
+     * "karsi=bn;bn,tr1" karşı tarafın dilini elle seçer; "yaz=tr:Merhaba|en:Hello;" metin girişi (seslerden sonra).
      */
     fun simulate(spec: String) {
         viewModelScope.launch {
@@ -146,14 +193,19 @@ class ConversationViewModel(app: Application) : AndroidViewModel(app) {
             val list = parts.last()
             engine.setPartnerLanguage(options["karsi"])
             val dual = list.startsWith("cift:")
-            val names = list.removePrefix("cift:").split(',').map { it.trim() }.filter { it.isNotEmpty() }
+            val manual = list.startsWith("dugme:")
+            val names = list.removePrefix("cift:").removePrefix("dugme:").split(',').map { it.trim() }.filter { it.isNotEmpty() }
             val dir = File(getApplication<Application>().getExternalFilesDir(null), "test")
             val clips = names.mapNotNull { name ->
                 val file = File(dir, if (name.endsWith(".wav")) name else "$name.wav")
                 WavReader.read(file)?.samples?.let { ConversationEngine.SimClip(it.toFloatPcm(), isUser = name.startsWith("tr")) }
             }
-            if (clips.isEmpty()) return@launch
-            engine.simulate(clips, ConversationEngine.Settings(mode = mode), dual)
+            val typed = options["yaz"]?.split('|')?.mapNotNull { item ->
+                val (lang, text) = item.split(':', limit = 2).takeIf { it.size == 2 } ?: return@mapNotNull null
+                (if (lang == "tr") Speaker.USER else Speaker.PARTNER) to text
+            } ?: emptyList()
+            if (clips.isEmpty() && typed.isEmpty()) return@launch
+            engine.simulate(clips, ConversationEngine.Settings(mode = mode, manual = manual), dual, typed)
         }
     }
 

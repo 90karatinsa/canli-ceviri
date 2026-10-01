@@ -28,7 +28,11 @@ Hedef cihaz Samsung Galaxy S24 Ultra; geliştirme Pixel 9 Pro (GrapheneOS) üzer
 | Kim konuştu | Çift mikrofonda iki kaydın seviye farkı; tek mikrofonda dil (Türkçe mi) | `pipeline/ConversationEngine.kt` |
 | Yazıya dökme | Whisper small (q8_0), whisper.cpp (yamalı), telefonun işlemcisinde | `app/src/main/cpp/whisper_jni.cpp`, `asr/` |
 | Çeviri | Tencent Hy-MT2-1.8B (Q4_K_M, 1,1 GB), llama.cpp, telefonun işlemcisinde; Google servisi ve telemetri yok | `llm/` modülü |
-| Seslendirme | Google'ın ses motoru (Speech Services by Google; yoksa sistemin motoru); ses parçaları uygulamaya alınıp istenen cihaza çalınıyor. Dilin sesi yoksa başka dilin sesiyle okunmuyor | `audio/TtsEngine.kt`, `audio/PcmPlayer.kt` |
+| Seslendirme | Google'ın ses motoru (Speech Services by Google; yoksa sistemin motoru); ses parçaları uygulamaya alınıp istenen cihaza çalınıyor. Dilin sesi yoksa başka dilin sesiyle okunmuyor; hoparlör bacağı yumuşak sınırlayıcıyla +5 dB | `audio/TtsEngine.kt`, `audio/PcmPlayer.kt` |
+| Arka plan | Motor uygulama ömründe (`CanliCeviriApp`); mikrofon türünde ön plan hizmeti ekran kapalıyken de dinletiyor (Android 14+: yalnızca ekrandayken başlatılabilir, arama kesintisinde kapatılmıyor) | `TranslationService.kt` |
+| Kesinti | Arama/susturma 2 Hz denetleniyor (`AudioManager.mode`, `isClientSilenced`, 1 sn sıfır çerçeve); duraklama → mikrofonlar kapanır, okumalar kesilir; bitince yeniden açılır, konuşma yarıda kaldıysa karşı taraftan sabit cümleyle tekrar istenir. Kulaklık takılıp çıkınca mikrofonlar yeniden açılır. Okuma sırasında geçici ses odağı (müzik kısılır) | `pipeline/ConversationEngine.kt` |
+| Giriş biçimleri | İşçi dört iş türü işliyor: ses parçası (VAD ya da bas-konuş düğmesi, konuşan zorlanmış), yazılan metin, tekrar okuma, düzeltme | `pipeline/ConversationEngine.kt` |
+| Sorun bildirimi | Son 30 konuşma, olay halkası, ayarlar, cihaz, önceki kapanış nedeni + son parçaların WAV'ları; WhatsApp'a `jid` ile (numara `local.properties` → `BuildConfig.RAPOR_WHATSAPP`) | `report/`, `MainActivity.sendIssue` |
 
 ## Derleme
 
@@ -38,6 +42,8 @@ export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
 ./gradlew assembleDebug
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
+
+`local.properties`'e `rapor.whatsapp=905…` (sorun bildiriminin gideceği numara) eklenir; boş kalırsa paylaşımda kişi elle seçilir.
 
 Modeller ilk açılışta uygulamadan indirilir. Geliştirirken adb ile de konabilir:
 
@@ -53,6 +59,8 @@ adb shell 'am start --activity-single-top -n com.alterra.canliceviri/.MainActivi
 adb shell 'am start --activity-single-top -n com.alterra.canliceviri/.MainActivity --es mt "threads=4"'
 adb shell 'am start --activity-single-top -n com.alterra.canliceviri/.MainActivity --es simule "tr1,en,tr2,es"'
 adb shell 'am start --activity-single-top -n com.alterra.canliceviri/.MainActivity --es simule "karsi=bn;bn,tr1"'   # karşı tarafın dili elle
+adb shell 'am start --activity-single-top -n com.alterra.canliceviri/.MainActivity --es simule "dugme:tr1,en"'       # bas-konuş: her ses bir basış
+adb shell 'am start --activity-single-top -n com.alterra.canliceviri/.MainActivity --es simule "karsi=en;yaz=tr:Merhaba|en:Hello;tr3"'  # yazılı giriş
 adb logcat -s CanliCeviri CanliCeviriBench
 ```
 

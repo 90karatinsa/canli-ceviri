@@ -26,6 +26,8 @@ class Segmenter(
         /** Konuşma çerçevelerinde ortalama (kulaklık − telefon) seviye farkı, dB. Tek mikrofonda null. */
         val meanDiffDb: Float?,
         val endedAt: Long,
+        /** Bas-konuş: kim konuştuğu düğmeden belli, seviye farkına ve dile bakılmaz. */
+        val forcedSpeaker: Speaker? = null,
     )
 
     private val preRollFrames = 10
@@ -131,36 +133,39 @@ class Segmenter(
         while (q.size > preRollFrames) q.removeFirst()
     }
 
-    /** Büyüyen 16-bit PCM arabelleği. */
-    private class PcmBuffer {
-        private val out = ByteArrayOutputStream()
-        private var samples = 0
-
-        fun append(frame: ShortArray) {
-            for (v in frame) {
-                out.write(v.toInt() and 0xff)
-                out.write((v.toInt() shr 8) and 0xff)
-            }
-            samples += frame.size
-        }
-
-        /** İçeriği döndürür, sondan [dropSamples] örneği atar ve arabelleği boşaltır. */
-        fun take(dropSamples: Int): ShortArray {
-            val bytes = out.toByteArray()
-            val n = (samples - dropSamples).coerceAtLeast(0)
-            val pcm = ShortArray(n) { i -> ((bytes[2 * i].toInt() and 0xff) or (bytes[2 * i + 1].toInt() shl 8)).toShort() }
-            clear()
-            return pcm
-        }
-
-        fun clear() {
-            out.reset()
-            samples = 0
-        }
-    }
-
     companion object {
         const val FRAME = 512
         const val FRAME_MS = 32
     }
 }
+
+/** Büyüyen 16-bit PCM arabelleği. */
+internal class PcmBuffer {
+    private val out = ByteArrayOutputStream()
+    private var samples = 0
+
+    val size: Int get() = samples
+
+    fun append(frame: ShortArray) {
+        for (v in frame) {
+            out.write(v.toInt() and 0xff)
+            out.write((v.toInt() shr 8) and 0xff)
+        }
+        samples += frame.size
+    }
+
+    /** İçeriği döndürür, sondan [dropSamples] örneği atar ve arabelleği boşaltır. */
+    fun take(dropSamples: Int): ShortArray {
+        val bytes = out.toByteArray()
+        val n = (samples - dropSamples).coerceAtLeast(0)
+        val pcm = ShortArray(n) { i -> ((bytes[2 * i].toInt() and 0xff) or (bytes[2 * i + 1].toInt() shl 8)).toShort() }
+        clear()
+        return pcm
+    }
+
+    fun clear() {
+        out.reset()
+        samples = 0
+    }
+}
+

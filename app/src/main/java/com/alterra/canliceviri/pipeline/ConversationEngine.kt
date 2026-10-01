@@ -2,8 +2,14 @@ package com.alterra.canliceviri.pipeline
 
 import android.content.Context
 import android.content.pm.PackageManager
+import android.media.AudioAttributes
+import android.media.AudioDeviceCallback
 import android.media.AudioDeviceInfo
+import android.media.AudioFocusRequest
+import android.media.AudioManager
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.os.PowerManager
 import android.util.Log
 import com.alterra.canliceviri.Lang
@@ -14,6 +20,7 @@ import com.alterra.canliceviri.asr.toFloatPcm
 import com.alterra.canliceviri.audio.AudioDevices
 import com.alterra.canliceviri.audio.Dsp
 import com.alterra.canliceviri.audio.TtsEngine
+import com.alterra.canliceviri.audio.WavWriter
 import com.alterra.canliceviri.llm.HyMtTranslator
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -30,6 +37,9 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.coroutines.resume
 import kotlin.math.max
@@ -58,7 +68,21 @@ class ConversationEngine(private val context: Context, private val scope: Corout
         val padSeconds: Float = 1f,
         /** Güveni düşük çözümde sıcaklık artışı; 0 kapalı. Testlerde hiç devreye girmedi, gecikmeyi öngörülemez yapıyor. */
         val fallback: Float = 0f,
+        /** Bas-konuş: otomatik algılama kapalı, konuşan yalnızca düğme basılıyken kaydedilir. */
+        val manual: Boolean = false,
+        /** Seslendirme hızı (1,0 normal, 0,8 yavaş). */
+        val speechRate: Float = 1f,
+        /** Sorun bildirimi için son parçaların sesi saklansın (files/sorun/). */
+        val attachAudio: Boolean = true,
     )
+
+    /** İşçinin sırayla işlediği işler: ses parçası, yazılan metin, tekrar okuma, düzeltme. */
+    private sealed class Task {
+        class Audio(val seg: Segmenter.Segment) : Task()
+        class Text(val text: String, val speaker: Speaker) : Task()
+        class Respeak(val id: Long) : Task()
+        class Edit(val id: Long, val text: String) : Task()
+    }
 
     private val _status = MutableStateFlow(EngineStatus())
     val status: StateFlow<EngineStatus> = _status
@@ -74,7 +98,7 @@ class ConversationEngine(private val context: Context, private val scope: Corout
     private var vadPartner: SileroVad? = null
     @Volatile private var segmenter: Segmenter? = null
 
-    private var work = Channel<Segmenter.Segment>(Channel.UNLIMITED)
+    private var work = Channel<Task>(Channel.UNLIMITED)
     private var play = Channel<PlayItem>(Channel.UNLIMITED)
     private val jobs = ArrayList<Job>()
     private val worker = Dispatchers.Default.limitedParallelism(1)
@@ -87,6 +111,49 @@ class ConversationEngine(private val context: Context, private val scope: Corout
 
     /** Whisper için iş parçacığı sayısı; telefon ısınınca ([thermal]) yarıya iner. */
     @Volatile private var threadsNow = Settings().threads
+
+    // Bas-konuş: düğme basılıyken çerçeveler burada birikir (VAD devre dışı).
+    @Volatile private var manual: Speaker? = null
+    private val manualUser = PcmBuffer()
+    private val manualPartner = PcmBuffer()
+    private var manualSince = 0L
+
+    // Kesinti (arama, mikrofonun başka uygulamaya geçmesi): mikrofon kapalı, motor "çalışıyor" ama duraklamış.
+    @Volatile private var pausedReason: String? = null
+    private var speechAtPause = false
+    private var normalSince = 0L
+    private var lastResumeTry = 0L
+    private var lastRestartAt = 0L
+    private var deviceChangeAt = 0L
+
+    private val am = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+    private val mainHandler = Handler(Looper.getMainLooper())
+
+    // Seslendirme sırasında ses odağı: müzik kısılır, odak gidince (zil) okuma kesilir.
+    private var focusHeld = false
+    private var focusRelease: Job? = null
+    private val focusListener = AudioManager.OnAudioFocusChangeListener { change ->
+        if (change == AudioManager.AUDIOFOCUS_LOSS || change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT) {
+            note("ses odağı alındı ($change): okuma kesildi")
+            focusHeld = false
+            tts.abort()
+        }
+    }
+    private val focusRequest: AudioFocusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+        .setAudioAttributes(
+            AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build()
+        )
+        .setOnAudioFocusChangeListener(focusListener, mainHandler)
+        .build()
+
+    // Kulaklık takıldı/çıktı: mikrofonlar yeniden açılır (çift mikrofon tek cihaza düşmesin).
+    private val deviceCallback = object : AudioDeviceCallback() {
+        override fun onAudioDevicesAdded(added: Array<out AudioDeviceInfo>) = onDevicesChanged(added, "takıldı")
+        override fun onAudioDevicesRemoved(removed: Array<out AudioDeviceInfo>) = onDevicesChanged(removed, "çıkarıldı")
+    }
+
+    /** Son olaylar (sorun bildirimi için): kararlar, kesintiler, hatalar. */
+    private val events = ArrayDeque<String>()
 
     /** Hoparlörden çeviri çalarken ve hemen sonrasında giriş yok sayılır. */
     @Volatile private var speakerPlaying = false
@@ -169,9 +236,20 @@ class ConversationEngine(private val context: Context, private val scope: Corout
 
     /** Dışarıdan (ör. hizmet başlatılamadı) hata metni göster. */
     fun reportError(message: String) {
-        Log.w(TAG, message)
+        note(message)
         _status.update { it.copy(error = message) }
     }
+
+    /** Günlüğe ve olay halkasına yazar (sorun bildirimine girer). */
+    fun note(line: String) {
+        Log.i(TAG, line)
+        synchronized(events) {
+            events.addLast(SimpleDateFormat("HH:mm:ss", Locale.US).format(Date()) + " " + line)
+            while (events.size > EVENTS_MAX) events.removeFirst()
+        }
+    }
+
+    fun recentEvents(): List<String> = synchronized(events) { events.toList() }
 
     /** Engeller: model yükleme ve mikrofon açma sürer; Dispatchers.Default'ta çağrılıyor. Çalışıyorsa önce durdurur. */
     suspend fun start(newSettings: Settings) = withContext(Dispatchers.Default) {
@@ -190,6 +268,7 @@ class ConversationEngine(private val context: Context, private val scope: Corout
 
     private suspend fun startInternal() {
         if (!prepareModels()) return
+        tts.speechRate = settings.speechRate
 
         val preferDual = settings.preferDual && settings.mode == Mode.CONVERSATION
         val mode = front.start(preferDual) { frames -> onFrames(frames) }
@@ -200,6 +279,8 @@ class ConversationEngine(private val context: Context, private val scope: Corout
         if (mode == MicMode.DUAL) vadUser = SileroVad.load(File(modelsDir, VAD_MODEL))
         segmenter = Segmenter(vadUser, vadPartner!!, silenceMs = settings.silenceMs)
         framesIn.set(0)
+        pausedReason = null
+        am.registerAudioDeviceCallback(deviceCallback, mainHandler)
         launchWorkers()
         _status.update {
             it.copy(
@@ -208,7 +289,168 @@ class ConversationEngine(private val context: Context, private val scope: Corout
                 error = if (!ttsReady) "Seslendirme motoru açılamadı; çeviriler yalnızca ekranda" else null,
             )
         }
-        Log.i(TAG, "Motor başladı: ${settings.mode}, ${front.info}")
+        note("Motor başladı: ${settings.mode}, ${front.info}")
+    }
+
+    // ------------------------------------------------------------------ kesinti
+
+    /** Arama ya da mikrofonun başka uygulamaya geçmesi: mikrofonlar kapanır, okumalar kesilir; motor çalışır görünür. */
+    private suspend fun pause(reason: String) = lifecycle.withLock {
+        if (segmenter == null || pausedReason != null) return@withLock
+        pausedReason = reason
+        speechAtPause = segmenter?.speaking == true || manual != null || _status.value.busy || !work.isEmpty
+        manual = null
+        front.stop()
+        segmenter?.reset()
+        drainPlays()
+        tts.abort()
+        normalSince = 0L
+        _status.update { it.copy(paused = reason, hearingAnyone = false, hearing = null, recording = null, playing = false) }
+        note("kesinti: $reason" + if (speechAtPause) " (konuşma ortasında)" else "")
+    }
+
+    /** Kesinti bitti: mikrofonlar yeniden açılır; konuşma yarıda kaldıysa karşı taraftan tekrar istenir. */
+    private suspend fun resume() = lifecycle.withLock {
+        val reason = pausedReason ?: return@withLock
+        if (segmenter == null) return@withLock
+        val mode = reopenCapture()
+        if (mode == MicMode.NONE) {
+            _status.update { it.copy(error = "Mikrofon geri alınamadı; Durdurup yeniden başlatın") }
+            note("kesinti sonrası mikrofon açılamadı")
+            return@withLock
+        }
+        pausedReason = null
+        _status.update { it.copy(paused = null, micMode = mode, micInfo = front.info, error = null) }
+        note("kesinti bitti ($reason): ${front.info}")
+        if (speechAtPause) requestRepeat()
+        speechAtPause = false
+    }
+
+    /** Mikrofonları kapatıp yeniden açar (3 deneme); susturulmuş geliyorsa başarısız sayılır. */
+    private suspend fun reopenCapture(): MicMode {
+        val preferDual = settings.preferDual && settings.mode == Mode.CONVERSATION
+        repeat(3) { attempt ->
+            front.stop()
+            val mode = front.start(preferDual) { frames -> onFrames(frames) }
+            if (mode != MicMode.NONE) {
+                delay(300)
+                if (!front.anySilenced()) {
+                    rebuildSegmenter(mode)
+                    return mode
+                }
+                note("mikrofon açıldı ama susturulmuş (deneme ${attempt + 1})")
+            }
+            delay(1000)
+        }
+        front.stop()
+        return MicMode.NONE
+    }
+
+    private fun rebuildSegmenter(mode: MicMode) {
+        if (mode == MicMode.DUAL && vadUser == null) vadUser = SileroVad.load(File(modelsDir, VAD_MODEL))
+        val user = if (mode == MicMode.DUAL) vadUser else null
+        segmenter = Segmenter(user, vadPartner!!, silenceMs = settings.silenceMs)
+    }
+
+    /** Kulaklık takıldı/çıktı ya da çift mikrofon tek cihaza düştü: dinlemeyi kesmeden mikrofonları yeniden aç. */
+    private suspend fun restartCapture(reason: String) = lifecycle.withLock {
+        if (segmenter == null || pausedReason != null) return@withLock
+        lastRestartAt = System.currentTimeMillis()
+        note("mikrofonlar yeniden açılıyor: $reason")
+        val mode = reopenCapture()
+        if (mode == MicMode.NONE) {
+            pausedReason = "mikrofon açılamadı"
+            _status.update { it.copy(paused = pausedReason, error = "Mikrofon açılamadı; yeniden deneniyor") }
+            return@withLock
+        }
+        _status.update { it.copy(micMode = mode, micInfo = front.info) }
+        note("mikrofon: ${front.info}")
+    }
+
+    private fun onDevicesChanged(devices: Array<out AudioDeviceInfo>, what: String) {
+        val headset = devices.filter { AudioDevices.isHeadsetInput(it) || AudioDevices.isHeadsetOutput(it) }
+        if (headset.isEmpty() || segmenter == null) return
+        note("kulaklık $what: ${headset.joinToString { AudioDevices.describe(it) }}")
+        val now = System.currentTimeMillis()
+        if (now - deviceChangeAt < 1000) return
+        deviceChangeAt = now
+        scope.launch(Dispatchers.Default) {
+            delay(800) // takma/çıkarma olayları art arda gelir; yönlendirme otursun
+            restartCapture("kulaklık $what")
+        }
+    }
+
+    /** Karşı taraftan tekrar isteme cümlesi: hoparlörden okunur, listede büyük yazıyla gösterilir. */
+    fun requestRepeat() {
+        val lang = Languages.FOREIGN.firstOrNull { it.code == partnerLang } ?: Languages.FOREIGN.first()
+        val id = nextId++
+        upsert(Utterance(id, Speaker.USER, UtteranceState.SPEAKING, 0, "tr", "(kesinti)", lang.code, lang.repeatRequest, note = "tekrar istendi"))
+        if (ttsReady) enqueuePlay(id, Speaker.USER, lang.code, lang.repeatRequest, System.currentTimeMillis())
+        else update(id) { it.copy(state = UtteranceState.DONE) }
+    }
+
+    /** Kuyruktaki okumaları at (kesinti): çalmakta olan `tts.abort()` ile kesilir. */
+    private fun drainPlays() {
+        while (play.tryReceive().isSuccess) { /* boşalt */ }
+        pendingPlays.set(0)
+        speakerPlaying = false
+    }
+
+    /** 2 Hz: arama modu, susturulmuş kayıt, yönlendirme; duraklamışsa sürdürme zamanı geldi mi. */
+    private suspend fun checkInterruptions() {
+        val mode = am.mode
+        val inCall = mode == AudioManager.MODE_RINGTONE || mode == AudioManager.MODE_IN_CALL || mode == AudioManager.MODE_IN_COMMUNICATION
+        val now = System.currentTimeMillis()
+        val reason = pausedReason
+        if (reason == null) {
+            if (inCall) {
+                pause("arama")
+                return
+            }
+            if (front.anySilenced()) {
+                pause("mikrofon başka bir uygulamada")
+                return
+            }
+            if (front.mode == MicMode.DUAL && front.routedSame() && now - lastRestartAt > 5000) restartCapture("iki mikrofon aynı cihaza düştü")
+            return
+        }
+        if (inCall) {
+            normalSince = 0L
+            return
+        }
+        if (normalSince == 0L) normalSince = now
+        val wait = if (reason == "arama") 1200L else 2000L
+        if (now - normalSince >= wait && now - lastResumeTry >= 2500) {
+            lastResumeTry = now
+            resume()
+        }
+    }
+
+    // ------------------------------------------------------------------ ses odağı
+
+    /** Okumadan önce geçici odak (müzik kısılır). Zil/arama sırasında verilmez: o zaman okunmaz. */
+    private fun acquireFocus(): Boolean {
+        focusRelease?.cancel()
+        if (focusHeld) return true
+        val r = am.requestAudioFocus(focusRequest)
+        focusHeld = r == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+        if (!focusHeld) note("ses odağı verilmedi ($r)")
+        return focusHeld
+    }
+
+    /** Kuyruk boşaldıysa kısa bir süre sonra odağı bırak (art arda cümlelerde müzik inip çıkmasın). */
+    private fun releaseFocusLater() {
+        focusRelease?.cancel()
+        focusRelease = scope.launch(Dispatchers.Default) {
+            delay(700)
+            if (play.isEmpty && pendingPlays.get() == 0) releaseFocus()
+        }
+    }
+
+    private fun releaseFocus() {
+        if (!focusHeld) return
+        focusHeld = false
+        am.abandonAudioFocusRequest(focusRequest)
     }
 
     /** Simülasyon sesi: [isUser] çift mikrofonda sesin hangi kanala yüksek verileceğini belirler. */
@@ -218,14 +460,18 @@ class ConversationEngine(private val context: Context, private val scope: Corout
      * Geliştirici: mikrofon yerine verilen sesleri (16 kHz, -1..1) gerçek zamanlı hızda işler.
      * [dual] ise iki kanal üretilir: konuşanın kanalında ses olduğu gibi, diğerinde -14 dB kısık (karşı mikrofonun
      * duyduğu gibi). Her sesten sonra 1,6 sn sessizlik verilir ve çeviri seslendirilip bitene kadar beklenir.
+     * [newSettings].manual ise her ses bir düğme basışı olarak verilir; [typed] metinler seslerden sonra yazılmış gibi işlenir.
      */
-    suspend fun simulate(clips: List<SimClip>, newSettings: Settings, dual: Boolean) = withContext(Dispatchers.Default) {
+    suspend fun simulate(
+        clips: List<SimClip>, newSettings: Settings, dual: Boolean, typed: List<Pair<Speaker, String>> = emptyList(),
+    ) = withContext(Dispatchers.Default) {
         val ready = lifecycle.withLock {
             stopInternal()
             settings = newSettings.copy(preferDual = dual)
             threadsNow = settings.threads
             _status.update { it.copy(error = null) }
             if (!prepareModels()) return@withLock false
+            tts.speechRate = settings.speechRate
             if (dual) vadUser = SileroVad.load(File(modelsDir, VAD_MODEL))
             segmenter = Segmenter(vadUser, vadPartner!!, silenceMs = settings.silenceMs)
             launchWorkers()
@@ -234,11 +480,7 @@ class ConversationEngine(private val context: Context, private val scope: Corout
             true
         }
         if (!ready) return@withContext
-        for (clip in clips) {
-            // Test sesleri farklı dillerde; her biri ayrı algılansın.
-            if (!manualPartnerLang) unlockPartnerLang()
-            feed(ShortArray(clip.pcm.size) { (clip.pcm[it] * 32767f).toInt().coerceIn(-32768, 32767).toShort() }, dual, clip.isUser)
-            feed(ShortArray(WhisperModel.SAMPLE_RATE * 16 / 10), dual, clip.isUser)
+        suspend fun awaitIdle() {
             // Sıradaki ses, önceki çeviri seslendirilip bitmeden başlamasın (gerçekte de karşı taraf bekler).
             var waited = 0
             while ((_status.value.busy || _status.value.playing || !work.isEmpty) && waited < 120_000) {
@@ -247,6 +489,24 @@ class ConversationEngine(private val context: Context, private val scope: Corout
             }
             // Hoparlör sustuktan sonraki yankı payı bitmeden verilen ses kesilir.
             while (System.currentTimeMillis() < gateUntil + 100) delay(50)
+        }
+        for (clip in clips) {
+            // Test sesleri farklı dillerde; her biri ayrı algılansın.
+            if (!manualPartnerLang) unlockPartnerLang()
+            val pcm = ShortArray(clip.pcm.size) { (clip.pcm[it] * 32767f).toInt().coerceIn(-32768, 32767).toShort() }
+            if (settings.manual) {
+                beginManual(if (clip.isUser) Speaker.USER else Speaker.PARTNER)
+                feed(pcm, dual, clip.isUser)
+                endManual()
+            } else {
+                feed(pcm, dual, clip.isUser)
+                feed(ShortArray(WhisperModel.SAMPLE_RATE * 16 / 10), dual, clip.isUser)
+            }
+            awaitIdle()
+        }
+        for ((speaker, text) in typed) {
+            if (!submitText(text, speaker)) Log.w(TAG, "metin işlenemedi ($speaker): $text")
+            awaitIdle()
         }
         lifecycle.withLock { stopInternal() }
     }
@@ -322,7 +582,7 @@ class ConversationEngine(private val context: Context, private val scope: Corout
     private fun launchWorkers() {
         work = Channel(Channel.UNLIMITED)
         play = Channel(Channel.UNLIMITED)
-        jobs += scope.launch(worker) { for (s in work) process(s) }
+        jobs += scope.launch(worker) { for (j in work) handle(j) }
         jobs += scope.launch(Dispatchers.Default) { for (p in play) speak(p) }
         jobs += scope.launch(Dispatchers.Default) { tickStatus() }
     }
@@ -337,10 +597,14 @@ class ConversationEngine(private val context: Context, private val scope: Corout
         work.close()
         play.close()
         front.stop()
+        am.unregisterAudioDeviceCallback(deviceCallback)
         segmenter = null
+        manual = null
+        pausedReason = null
         speakerPlaying = false
         pendingPlays.set(0)
-        _status.update { it.copy(running = false, hearingAnyone = false, hearing = null, playing = false, busy = false) }
+        releaseFocus()
+        _status.update { it.copy(running = false, paused = null, hearingAnyone = false, hearing = null, playing = false, busy = false, recording = null) }
     }
 
     fun release() {
@@ -360,6 +624,14 @@ class ConversationEngine(private val context: Context, private val scope: Corout
     private fun onFrames(f: AudioFrontEnd.Frames) {
         val seg = segmenter ?: return
         framesIn.incrementAndGet()
+        manual?.let { who ->
+            // Düğme basılı: ne VAD ne hoparlör kapısı; ham çerçeveler birikir.
+            f.user?.let { manualUser.append(it) }
+            manualPartner.append(f.partner)
+            if (System.currentTimeMillis() - manualSince >= MANUAL_MAX_MS) endManual()
+            return
+        }
+        if (settings.manual) return // bas-konuşta otomatik algılama kapalı
         if (speakerPlaying || System.currentTimeMillis() < gateUntil) {
             if (!gated) {
                 seg.reset()
@@ -369,7 +641,92 @@ class ConversationEngine(private val context: Context, private val scope: Corout
         }
         gated = false
         val s = seg.process(f) ?: return
-        work.trySend(s)
+        work.trySend(Task.Audio(s))
+    }
+
+    // ------------------------------------------------------------------ bas-konuş ve metin
+
+    /** Bas-konuş: düğmeye basıldı. Hoparlörde okuma sürüyorsa kesilir (kullanıcı konuşmak istiyor). */
+    fun beginManual(speaker: Speaker) {
+        if (segmenter == null || manual != null) return
+        if (speakerPlaying || _status.value.playing) tts.abort()
+        manualUser.clear()
+        manualPartner.clear()
+        manualSince = System.currentTimeMillis()
+        manual = speaker
+        _status.update { it.copy(recording = speaker, recordingSince = manualSince) }
+    }
+
+    /** Bas-konuş: düğme bırakıldı; biriken ses konuşanı bilinen parça olarak işe gider. */
+    fun endManual() {
+        val who = manual ?: return
+        manual = null
+        val partner = manualPartner.take(0)
+        val user = if (manualUser.size > 0) manualUser.take(0) else null
+        _status.update { it.copy(recording = null) }
+        val ms = partner.size * 1000 / WhisperModel.SAMPLE_RATE
+        if (ms < MANUAL_MIN_MS) return
+        work.trySend(Task.Audio(Segmenter.Segment(user, partner, ms, null, System.currentTimeMillis(), forcedSpeaker = who)))
+    }
+
+    /** Yazılan metin: Türkçe (kullanıcı) ya da karşı tarafın dilinde (dil seçili olmalı). */
+    fun submitText(text: String, speaker: Speaker): Boolean {
+        val t = text.trim()
+        if (t.isEmpty() || segmenter == null) return false
+        if (speaker == Speaker.PARTNER && partnerLang == null) return false
+        return work.trySend(Task.Text(t, speaker)).isSuccess
+    }
+
+    fun respeak(id: Long) {
+        work.trySend(Task.Respeak(id))
+    }
+
+    /** Konuşma biçimi çalışırken değiştirildi: düğmeyle ⇄ otomatik. */
+    fun setManual(manual: Boolean) {
+        settings = settings.copy(manual = manual)
+        if (!manual) endManual()
+        segmenter?.reset()
+        note("konuşma biçimi: ${if (manual) "düğmeyle" else "otomatik"}")
+    }
+
+    fun setSpeechRate(rate: Float) {
+        settings = settings.copy(speechRate = rate)
+        tts.speechRate = rate
+    }
+
+    fun setAttachAudio(v: Boolean) {
+        settings = settings.copy(attachAudio = v)
+    }
+
+    private val issueDir: File get() = File(context.getExternalFilesDir(null), "sorun").apply { mkdirs() }
+
+    /** Sorun bildirimine eklenecek son parça kayıtları (en yeni önce). */
+    fun recentSegmentFiles(): List<File> =
+        issueDir.listFiles { f -> f.name.startsWith("parca-") }?.sortedByDescending { it.lastModified() }?.take(SEGMENT_FILES_MAX) ?: emptyList()
+
+    /** Parçanın sesini sorun klasörüne yazar (konuşana göre kullanılan kanal; çift mikrofonda diğeri de). */
+    private fun archiveSegment(id: Long, who: Speaker, lang: String, seg: Segmenter.Segment) {
+        if (!settings.attachAudio) return
+        try {
+            val stamp = SimpleDateFormat("HHmmss", Locale.US).format(Date())
+            val whoName = if (who == Speaker.USER) "siz" else "karsi"
+            val used = if (who == Speaker.USER) seg.userPcm ?: seg.partnerPcm else seg.partnerPcm
+            WavWriter(File(issueDir, "parca-$stamp-$id-$whoName-$lang.wav"), WhisperModel.SAMPLE_RATE).use { it.write(used) }
+            val other = when {
+                who == Speaker.USER && seg.userPcm != null -> seg.partnerPcm
+                who == Speaker.PARTNER -> seg.userPcm
+                else -> null
+            }
+            other?.let { o -> WavWriter(File(issueDir, "parca-$stamp-$id-$whoName-$lang-diger.wav"), WhisperModel.SAMPLE_RATE).use { it.write(o) } }
+            issueDir.listFiles { f -> f.name.startsWith("parca-") }?.sortedByDescending { it.lastModified() }?.drop(SEGMENT_FILES_MAX)?.forEach { it.delete() }
+        } catch (e: Exception) {
+            Log.w(TAG, "parça kaydedilemedi", e)
+        }
+    }
+
+    fun edit(id: Long, text: String) {
+        val t = text.trim()
+        if (t.isNotEmpty()) work.trySend(Task.Edit(id, t))
     }
 
     /** Arayüz için seviye ve "kim konuşuyor" bilgisini 10 kez/sn günceller. */
@@ -378,12 +735,26 @@ class ConversationEngine(private val context: Context, private val scope: Corout
         while (true) {
             // Ekran kapalıyken de mikrofonun aktığı günlükten görülsün (5 sn'de bir).
             if (++tick % 50 == 0) Log.i(TAG, "giriş: ${framesIn.get()} çerçeve")
+            if (tick % 5 == 0 && front.mode != MicMode.NONE || pausedReason != null) {
+                try {
+                    checkInterruptions()
+                } catch (e: Exception) {
+                    Log.e(TAG, "kesinti denetimi", e)
+                }
+            }
             val seg = segmenter
             val lu = front.levelUser
             val lp = front.levelPartner
             val hearing = if (seg?.speaking == true && front.mode == MicMode.DUAL) {
                 if (lu - lp >= (userMeanDb + partnerMeanDb) / 2) Speaker.USER else Speaker.PARTNER
             } else null
+            // Hoparlör ses düzeyi uyarısı için (saniyede bir): kulaklık takılıyken sistem kulaklığın düzeyini gösterir.
+            if (tick % 10 == 0) {
+                val maxVol = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
+                val vol = am.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat() / maxVol
+                val headset = AudioDevices.headsetOutput(context) != null
+                _status.update { it.copy(speakerVolume = vol, headsetAttached = headset) }
+            }
             _status.update {
                 it.copy(
                     levelUser = lu, levelPartner = lp,
@@ -397,17 +768,33 @@ class ConversationEngine(private val context: Context, private val scope: Corout
 
     // ------------------------------------------------------------------ işleme
 
-    private suspend fun process(seg: Segmenter.Segment) {
+    private suspend fun handle(job: Task) {
+        _status.update { it.copy(busy = true) }
+        try {
+            when (job) {
+                is Task.Audio -> processAudio(job.seg)
+                is Task.Text -> processText(job)
+                is Task.Respeak -> respeakNow(job.id)
+                is Task.Edit -> editNow(job)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "işleme hatası", e)
+        } finally {
+            _status.update { it.copy(busy = !work.isEmpty) }
+        }
+    }
+
+    private suspend fun processAudio(seg: Segmenter.Segment) {
         val w = whisper ?: return
         val id = nextId++
         val audioMs = seg.partnerPcm.size * 1000L / WhisperModel.SAMPLE_RATE
         var speaker = when {
+            seg.forcedSpeaker != null -> seg.forcedSpeaker
             settings.mode == Mode.LISTENING -> Speaker.PARTNER
             seg.meanDiffDb != null -> classify(seg.meanDiffDb)
             else -> null // tek mikrofon: dil söyleyecek
         }
         upsert(Utterance(id, speaker ?: Speaker.PARTNER, UtteranceState.TRANSCRIBING, audioMs))
-        _status.update { it.copy(busy = true) }
         try {
             // Kullanıcıysa kulaklık mikrofonu (ağza yakın), değilse telefon mikrofonu.
             fun pcmFor(s: Speaker?) = (if (s == Speaker.USER) seg.userPcm ?: seg.partnerPcm else seg.partnerPcm).toFloatPcm()
@@ -417,15 +804,20 @@ class ConversationEngine(private val context: Context, private val scope: Corout
             var lang: String
             var note: String? = null
             if (!manualPartnerLang && partnerLocked && System.currentTimeMillis() - lastPartnerAt > RELOCK_AFTER_MS) unlockPartnerLang()
+            val forced = seg.forcedSpeaker != null
             if (speaker == Speaker.USER) {
                 lang = "tr"
             } else if (partnerLocked && partnerLang != null && (speaker == Speaker.PARTNER || settings.mode == Mode.LISTENING)) {
                 lang = partnerLang!!
             } else {
                 // Dil tespiti: Türkçe çıkarsa konuşan kullanıcıdır (tek mikrofonda asıl yöntem bu).
-                val candidates = if (settings.mode == Mode.LISTENING) Languages.ALL.map { it.code }
-                else if (partnerLocked && partnerLang != null) listOf("tr", partnerLang!!)
-                else Languages.ALL.map { it.code }
+                // Düğmeyle "karşı taraf" dendiyse Türkçe aday değil.
+                val candidates = when {
+                    forced -> Languages.FOREIGN.map { it.code }
+                    settings.mode == Mode.LISTENING -> Languages.ALL.map { it.code }
+                    partnerLocked && partnerLang != null -> listOf("tr", partnerLang!!)
+                    else -> Languages.ALL.map { it.code }
+                }
                 val lidPcm = pcmFor(speaker)
                 val guess = w.detectLanguage(lidPcm, candidates, threadsNow, audioCtx = audioCtxFor(lidPcm))
                 val best = guess?.best
@@ -445,7 +837,14 @@ class ConversationEngine(private val context: Context, private val scope: Corout
             }
             val who = speaker ?: Speaker.PARTNER
             if (who == Speaker.PARTNER) lastPartnerAt = System.currentTimeMillis()
+            archiveSegment(id, who, lang, seg)
             val pcm = pcmFor(who)
+            // Düğmeyle alınan parçada VAD yok: içinde konuşma yoksa (sessiz oda) Whisper uydurur; atla.
+            val raw = if (who == Speaker.USER) seg.userPcm ?: seg.partnerPcm else seg.partnerPcm
+            if (forced && Dsp.powerToDb(Dsp.meanPower(raw)) < SILENT_DB) {
+                upsert(Utterance(id, who, UtteranceState.DROPPED, audioMs, lang, null, asrMs = 0, note = "ses algılanmadı"))
+                return
+            }
             val maxTokens = max(24, (audioMs / 1000f * 15).toInt() + 10)
             val turkish = lang == "tr"
             val r = w.transcribeWithRetry(
@@ -466,40 +865,70 @@ class ConversationEngine(private val context: Context, private val scope: Corout
                 upsert(Utterance(id, who, UtteranceState.DROPPED, audioMs, lang, text, asrMs = asrMs, note = "gürültü sayıldı"))
                 return
             }
-            upsert(Utterance(id, who, UtteranceState.TRANSLATING, audioMs, lang, text, asrMs = asrMs, note = note))
-
-            val target = if (who == Speaker.USER) (partnerLang ?: "en") else "tr"
-            if (lang == target) {
-                upsert(Utterance(id, who, UtteranceState.DONE, audioMs, lang, text, target, text, asrMs, 0, note = note))
-                return
-            }
-            val t0 = System.currentTimeMillis()
-            val mt = translator?.translate(text, target)
-            if (mt == null || !mt.ok || mt.text.isEmpty()) {
-                upsert(Utterance(id, who, UtteranceState.ERROR, audioMs, lang, text, target, null, asrMs, note = "çeviri yapılamadı"))
-                return
-            }
-            val translation = mt.text
-            val mtMs = System.currentTimeMillis() - t0
-            val guessedTarget = if (who == Speaker.USER && partnerLang == null) "karşı tarafın dili belli değil, İngilizce kullanıldı" else null
-            val targetNote = listOfNotNull(note, guessedTarget).joinToString(" · ").ifEmpty { null }
-            upsert(Utterance(id, who, UtteranceState.SPEAKING, audioMs, lang, text, target, translation, asrMs, mtMs, note = targetNote))
-
-            if (ttsReady) {
-                val device = if (who == Speaker.USER) AudioDevices.speaker(context) else AudioDevices.headsetOutput(context) ?: AudioDevices.speaker(context)
-                val targetLang = Languages.ALL.firstOrNull { it.code == target } ?: Languages.TURKISH
-                pendingPlays.incrementAndGet()
-                _status.update { it.copy(playing = true) }
-                play.trySend(PlayItem(id, translation, targetLang, device, seg.endedAt))
-            } else {
-                update(id) { it.copy(state = UtteranceState.DONE) }
-            }
+            translateAndSpeak(id, who, lang, text, audioMs, asrMs, note, seg.endedAt, typed = false)
         } catch (e: Exception) {
             Log.e(TAG, "işleme hatası", e)
             update(id) { it.copy(state = UtteranceState.ERROR, note = e.message) }
-        } finally {
-            _status.update { it.copy(busy = !work.isEmpty) }
         }
+    }
+
+    private suspend fun processText(job: Task.Text) {
+        val id = nextId++
+        val lang = if (job.speaker == Speaker.USER) "tr" else (partnerLang ?: return)
+        translateAndSpeak(id, job.speaker, lang, job.text, 0, null, null, System.currentTimeMillis(), typed = true)
+    }
+
+    private fun respeakNow(id: Long) {
+        val u = _utterances.value.firstOrNull { it.id == id } ?: return
+        val translation = u.translation ?: return
+        val target = u.targetLang ?: return
+        if (!ttsReady) return
+        enqueuePlay(id, u.speaker, target, translation, System.currentTimeMillis())
+    }
+
+    private suspend fun editNow(job: Task.Edit) {
+        val u = _utterances.value.firstOrNull { it.id == job.id } ?: return
+        val lang = u.sourceLang ?: if (u.speaker == Speaker.USER) "tr" else (partnerLang ?: return)
+        if (job.text == u.text) {
+            respeakNow(job.id)
+            return
+        }
+        translateAndSpeak(job.id, u.speaker, lang, job.text, u.audioMs, u.asrMs, "düzeltildi", System.currentTimeMillis(), typed = u.typed)
+    }
+
+    /** Metin hazır: çevir, listeye yaz, doğru cihaza okut. Ses parçası, yazılan metin ve düzeltme bu yoldan geçer. */
+    private suspend fun translateAndSpeak(
+        id: Long, who: Speaker, lang: String, text: String, audioMs: Long, asrMs: Long?, note: String?, speechEndedAt: Long, typed: Boolean,
+    ) {
+        upsert(Utterance(id, who, UtteranceState.TRANSLATING, audioMs, lang, text, asrMs = asrMs, note = note, typed = typed))
+        val target = if (who == Speaker.USER) (partnerLang ?: "en") else "tr"
+        if (lang == target) {
+            upsert(Utterance(id, who, UtteranceState.DONE, audioMs, lang, text, target, text, asrMs, 0, note = note, typed = typed))
+            return
+        }
+        val t0 = System.currentTimeMillis()
+        val mt = translator?.translate(text, target)
+        if (mt == null || !mt.ok || mt.text.isEmpty()) {
+            upsert(Utterance(id, who, UtteranceState.ERROR, audioMs, lang, text, target, null, asrMs, note = "çeviri yapılamadı", typed = typed))
+            return
+        }
+        val translation = mt.text
+        val mtMs = System.currentTimeMillis() - t0
+        val guessedTarget = if (who == Speaker.USER && partnerLang == null) "karşı tarafın dili belli değil, İngilizce kullanıldı" else null
+        val targetNote = listOfNotNull(note, guessedTarget).joinToString(" · ").ifEmpty { null }
+        upsert(Utterance(id, who, UtteranceState.SPEAKING, audioMs, lang, text, target, translation, asrMs, mtMs, note = targetNote, typed = typed))
+        if (ttsReady) enqueuePlay(id, who, target, translation, speechEndedAt)
+        else update(id) { it.copy(state = UtteranceState.DONE) }
+    }
+
+    /** Kullanıcının çevirisi hoparlöre, karşı tarafınki kulaklığa (yoksa hoparlöre). */
+    private fun enqueuePlay(id: Long, who: Speaker, target: String, text: String, speechEndedAt: Long) {
+        val device = if (who == Speaker.USER) AudioDevices.speaker(context) else AudioDevices.headsetOutput(context) ?: AudioDevices.speaker(context)
+        val targetLang = Languages.ALL.firstOrNull { it.code == target } ?: Languages.TURKISH
+        pendingPlays.incrementAndGet()
+        _status.update { it.copy(playing = true) }
+        update(id) { it.copy(state = UtteranceState.SPEAKING) }
+        play.trySend(PlayItem(id, text, targetLang, device, speechEndedAt))
     }
 
     /** Seviye farkına göre kim konuştu; iki kümenin ortalamasını yavaşça günceller. */
@@ -513,7 +942,7 @@ class ConversationEngine(private val context: Context, private val scope: Corout
             userMeanDb = mid + 3f
             partnerMeanDb = mid - 3f
         }
-        Log.i(TAG, "konuşan: $s (fark ${"%.1f".format(diffDb)} dB, eşik ${"%.1f".format(threshold)})")
+        note("konuşan: $s (fark ${"%.1f".format(diffDb)} dB, eşik ${"%.1f".format(threshold)})")
         return s
     }
 
@@ -536,6 +965,12 @@ class ConversationEngine(private val context: Context, private val scope: Corout
     // ------------------------------------------------------------------ seslendirme
 
     private suspend fun speak(item: PlayItem) {
+        if (!acquireFocus()) {
+            val left = pendingPlays.decrementAndGet().coerceAtLeast(0)
+            _status.update { it.copy(playing = left > 0) }
+            update(item.utteranceId) { it.copy(state = UtteranceState.DONE, note = listOfNotNull(it.note, "okunamadı: arama sırasında").joinToString(" · ")) }
+            return
+        }
         val toSpeaker = item.device?.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER
         if (toSpeaker) speakerPlaying = true
         _status.update { it.copy(playing = true) }
@@ -549,6 +984,7 @@ class ConversationEngine(private val context: Context, private val scope: Corout
         }
         val left = pendingPlays.decrementAndGet().coerceAtLeast(0)
         _status.update { it.copy(playing = left > 0) }
+        if (left == 0) releaseFocusLater()
         val latency = r.firstAudioMs?.let { startedAt + it - item.speechEndedAt }
         Log.i(TAG, "seslendirme #${item.utteranceId} ${item.lang.code} ses=${r.voice} ilk-ses=${r.firstAudioMs} ms ${r.error ?: ""}")
         // Çeviri yapıldı; ses çıkmadıysa bile ekranda duruyor, yalnızca neden okunmadığı yazılıyor.
@@ -569,10 +1005,9 @@ class ConversationEngine(private val context: Context, private val scope: Corout
     // ------------------------------------------------------------------ liste
 
     private fun logResult(u: Utterance) {
-        Log.i(
-            TAG,
+        note(
             "sonuç #${u.id} ${u.speaker} ${u.sourceLang}→${u.targetLang} ${u.state} ses=${u.audioMs}ms yazı=${u.asrMs}ms " +
-                "çeviri=${u.mtMs}ms ilk-ses=${u.latencyMs}ms | ${u.text} | ${u.translation} | ${u.note ?: ""}",
+                "çeviri=${u.mtMs}ms ilk-ses=${u.latencyMs}ms${if (u.typed) " yazılı" else ""} | ${u.text} | ${u.translation} | ${u.note ?: ""}",
         )
     }
 
@@ -598,5 +1033,14 @@ class ConversationEngine(private val context: Context, private val scope: Corout
         const val VAD_MODEL = "ggml-silero-v6.2.0.bin"
         const val GOOGLE_TTS = "com.google.android.tts"
         private const val RELOCK_AFTER_MS = 90_000L
+
+        /** Bas-konuşta en kısa ve en uzun kayıt (Whisper penceresi 30 sn; pay bırakılıyor). */
+        private const val MANUAL_MIN_MS = 250
+        private const val MANUAL_MAX_MS = 20_000L
+        private const val EVENTS_MAX = 200
+        private const val SEGMENT_FILES_MAX = 20
+
+        /** Bas-konuş parçasının ortalama gücü bunun altındaysa konuşma yok sayılır (dBFS). */
+        private const val SILENT_DB = -55f
     }
 }

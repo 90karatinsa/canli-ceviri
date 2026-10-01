@@ -28,6 +28,11 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
+import androidx.lifecycle.lifecycleScope
+import com.alterra.canliceviri.report.IssueReport
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import com.alterra.canliceviri.diag.DiagnosticsScreen
 import com.alterra.canliceviri.diag.DiagnosticsViewModel
 import com.alterra.canliceviri.ui.CanliCeviriTheme
@@ -106,6 +111,7 @@ class MainActivity : ComponentActivity() {
                             }
                         },
                         onFixBattery = ::requestIgnoreBatteryOptimizations,
+                        onReportIssue = ::reportIssue,
                     )
                 }
             }
@@ -186,6 +192,46 @@ class MainActivity : ComponentActivity() {
             .putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
             .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         startActivity(Intent.createChooser(send, "Kayıtları paylaş"))
+    }
+
+    /** Sorun bildirimi: rapor + (isteğe bağlı) son parçaların sesi, WhatsApp'ta geliştiricinin sohbetine. */
+    private fun reportIssue(note: String, attachAudio: Boolean) {
+        lifecycleScope.launch {
+            val bundle = withContext(Dispatchers.IO) { IssueReport.build(this@MainActivity, convo.engine, convo.reportSettings(), note, attachAudio) }
+            sendIssue(bundle)
+        }
+    }
+
+    private fun sendIssue(b: IssueReport.Bundle) {
+        val files = listOf(b.report) + b.attachments
+        val uris = ArrayList(files.map { FileProvider.getUriForFile(this, "$packageName.files", it) })
+        val send = Intent(Intent.ACTION_SEND_MULTIPLE)
+            .setType("*/*")
+            .putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
+            .putExtra(Intent.EXTRA_TEXT, b.summary)
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        send.clipData = ClipData.newUri(contentResolver, "rapor", uris[0]).apply { uris.drop(1).forEach { addItem(ClipData.Item(it)) } }
+        val whatsapp = listOf("com.whatsapp", "com.whatsapp.w4b").filter { isPackageInstalled(it) }
+        val number = BuildConfig.RAPOR_WHATSAPP
+        if (whatsapp.size == 1 && number.isNotEmpty()) {
+            // "jid" belgesiz ama yaygın: sohbet önceden seçili açılır; çalışmazsa kullanıcı listeden seçer.
+            send.setPackage(whatsapp[0]).putExtra("jid", "$number@s.whatsapp.net")
+            try {
+                startActivity(send)
+                return
+            } catch (_: ActivityNotFoundException) {
+                send.setPackage(null)
+                send.removeExtra("jid")
+            }
+        }
+        startActivity(Intent.createChooser(send, "Raporu gönder"))
+    }
+
+    private fun isPackageInstalled(pkg: String) = try {
+        packageManager.getPackageInfo(pkg, 0)
+        true
+    } catch (_: PackageManager.NameNotFoundException) {
+        false
     }
 
     /** Samsung "uyuyan uygulama" kısıtı ön plan hizmetini öldürmesin; sistem penceresi bir kez açılır. */

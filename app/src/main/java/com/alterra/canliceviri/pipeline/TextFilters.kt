@@ -12,6 +12,7 @@ object TextFilters {
     private val HALLUCINATIONS = setOf(
         // Türkçe
         "altyazı mk", "altyazı m k", "izlediğiniz için teşekkürler", "izlediğiniz için teşekkür ederim",
+        "bu videoyu izlediğiniz için teşekkür ederim", "bu videoyu izlediğiniz için teşekkürler", "videoyu izlediğiniz için teşekkürler",
         "abone olmayı unutmayın", "altyazılar amaraorg topluluğu tarafından", "teşekkürler", "teşekkür ederim",
         "hoşça kalın", "görüşmek üzere",
         // İngilizce

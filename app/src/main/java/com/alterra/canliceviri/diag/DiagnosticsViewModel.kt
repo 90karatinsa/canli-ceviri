@@ -718,14 +718,7 @@ class DiagnosticsViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---------------------------------------------------------------- Rapor
 
-    private fun buildDeviceSummary(): String {
-        val soc = if (Build.VERSION.SDK_INT >= 31) "${Build.SOC_MANUFACTURER} ${Build.SOC_MODEL}" else Build.HARDWARE
-        val mem = ActivityManager.MemoryInfo()
-        (ctx.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager).getMemoryInfo(mem)
-        val unprocessed = am.getProperty(AudioManager.PROPERTY_SUPPORT_AUDIO_SOURCE_UNPROCESSED) == "true"
-        return "${Build.MANUFACTURER} ${Build.MODEL} · Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT}) · " +
-            "$soc · RAM ${"%.1f".format(mem.totalMem / 1e9)} GB · işlenmemiş kayıt ${if (unprocessed) "var" else "yok"}"
-    }
+    private fun buildDeviceSummary(): String = com.alterra.canliceviri.report.DeviceInfo.summary(ctx)
 
     fun buildReport(): String = buildString {
         fun line(v: Verdict?) = when (v?.kind) {
