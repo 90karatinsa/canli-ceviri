@@ -160,12 +160,12 @@ private fun Header(vm: ConversationViewModel, status: EngineStatus, onOpenDiagno
 
 @Composable
 private fun Controls(vm: ConversationViewModel, status: EngineStatus) {
+    // Mod çipleri ve dil düğmesi ayrı satırlarda: dar ekranda (S24 Ultra) tek satıra sığmıyor.
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
         FilterChip(selected = vm.mode == Mode.CONVERSATION, onClick = { vm.selectMode(Mode.CONVERSATION) }, label = { Text("Konuşma") })
         FilterChip(selected = vm.mode == Mode.LISTENING, onClick = { vm.selectMode(Mode.LISTENING) }, label = { Text("Dinleme modu") })
-        // Kalan genişlik dil düğmesine; dar ekranda metin taşmak yerine kısalır.
-        Row(Modifier.weight(1f), horizontalArrangement = Arrangement.End) { LanguagePicker(vm, status) }
     }
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) { LanguagePicker(vm, status) }
 }
 
 @Composable
@@ -179,7 +179,7 @@ private fun LanguagePicker(vm: ConversationViewModel, status: EngineStatus) {
     }
     Box {
         OutlinedButton(onClick = { open = true }, contentPadding = PaddingValues(horizontal = 12.dp)) {
-            Text("Karşı: $label ▾", maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
+            Text("Karşı taraf: $label ▾", maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
         }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
             DropdownMenuItem(text = { Text("Otomatik algıla") }, onClick = { open = false; vm.selectPartnerLang(null) })
