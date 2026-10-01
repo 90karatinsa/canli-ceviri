@@ -1,0 +1,14 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Sol balon: karşı taraf -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M30,30 h28 a4,4 0 0 1 4,4 v18 a4,4 0 0 1 -4,4 h-18 l-8,7 v-7 h-2 a4,4 0 0 1 -4,-4 v-18 a4,4 0 0 1 4,-4 z" />
+    <!-- Sağ balon: Türkçe -->
+    <path
+        android:fillColor="#FFD54F"
+        android:pathData="M50,48 h28 a4,4 0 0 1 4,4 v18 a4,4 0 0 1 -4,4 h-2 v7 l-8,-7 h-18 a4,4 0 0 1 -4,-4 v-18 a4,4 0 0 1 4,-4 z" />
+</vector>

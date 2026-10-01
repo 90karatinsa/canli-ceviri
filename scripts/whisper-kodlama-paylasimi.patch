@@ -1,0 +1,110 @@
+whisper.cpp yaması (canli-ceviri): dil tespiti ile yazıya dökme aynı kodlayıcı çıktısını kullansın.
+Tek mikrofonda her cümlede dil tespiti gerekiyor; yamasız whisper.cpp sesi iki kez kodluyor (Pixel 9 Pro'da cümle başına ~0,5 sn).
+whisper_lang_auto_detect_keep: sesi verilen audio_ctx ile kodlar, dili bulur, kodlamayı saklar.
+Hemen ardından aynı audio_ctx ile çağrılan whisper_full kodlayıcıyı atlar. scripts/kurulum.sh uygular.
+
+diff --git a/include/whisper.h b/include/whisper.h
+index 545084e..5704a07 100644
+--- a/include/whisper.h
++++ b/include/whisper.h
+@@ -388,6 +388,22 @@ extern "C" {
+                                int   n_threads,
+                              float * lang_probs);
+ 
++    // canli-ceviri yamasi: dil tespitinde kodlanan ses, hemen ardindan ayni sesle cagrilan whisper_full'da
++    // yeniden kodlanmaz (kodlayici cumle basina bir kez calisir).
++    // Sesi ctx'in durumunda [audio_ctx] baglamiyla (0 = tam) kodlar, dil olasiliklarini verir ve kodlamayi saklar.
++    // Sonraki whisper_full ayni audio_ctx ve offset 0 ile cagrilirsa kodlayiciyi calistirmaz; cagiran ayni sesi
++    // vermekten sorumludur. Saklanan kodlama her whisper_full cagrisinda tuketilir.
++    WHISPER_API int whisper_lang_auto_detect_keep(
++            struct whisper_context * ctx,
++                       const float * samples,
++                               int   n_samples,
++                               int   audio_ctx,
++                               int   n_threads,
++                             float * lang_probs);
++
++    // Saklanan kodlamayi birakir: sonraki whisper_full sesi yeniden kodlar.
++    WHISPER_API void whisper_drop_kept_encoding(struct whisper_context * ctx);
++
+     WHISPER_API int whisper_n_len           (struct whisper_context * ctx); // mel length
+     WHISPER_API int whisper_n_len_from_state(struct whisper_state * state); // mel length
+     WHISPER_API int whisper_n_vocab         (struct whisper_context * ctx);
+diff --git a/src/whisper.cpp b/src/whisper.cpp
+index dd8bd93..d2ef8f6 100644
+--- a/src/whisper.cpp
++++ b/src/whisper.cpp
+@@ -932,6 +932,9 @@ struct whisper_state {
+     // [EXPERIMENTAL] speed-up techniques
+     int32_t exp_n_audio_ctx = 0; // 0 - use default
+ 
++    // canli-ceviri yamasi: whisper_lang_auto_detect_keep'in biraktigi kodlamanin audio_ctx'i, yoksa -1
++    int32_t kept_audio_ctx = -1;
++
+     whisper_vad_context * vad_context = nullptr;
+ 
+     struct vad_segment_info {
+@@ -4247,6 +4250,41 @@ int whisper_lang_auto_detect(
+     return whisper_lang_auto_detect_with_state(ctx, ctx->state, offset_ms, n_threads, lang_probs);
+ }
+ 
++int whisper_lang_auto_detect_keep(
++        struct whisper_context * ctx,
++                   const float * samples,
++                           int   n_samples,
++                           int   audio_ctx,
++                           int   n_threads,
++                         float * lang_probs) {
++    whisper_state * state = ctx->state;
++    state->kept_audio_ctx = -1;
++
++    if (audio_ctx < 0 || audio_ctx > whisper_n_audio_ctx(ctx)) {
++        WHISPER_LOG_ERROR("%s: audio_ctx %d is out of range\n", __func__, audio_ctx);
++        return -5;
++    }
++    if (whisper_pcm_to_mel_with_state(ctx, state, samples, n_samples, n_threads) != 0) {
++        WHISPER_LOG_ERROR("%s: failed to compute mel spectrogram\n", __func__);
++        return -2;
++    }
++
++    state->exp_n_audio_ctx = audio_ctx;
++
++    const int lang_id = whisper_lang_auto_detect_internal(ctx, state, 0, n_threads, lang_probs, nullptr, nullptr);
++    if (lang_id >= 0) {
++        state->kept_audio_ctx = audio_ctx;
++    }
++
++    return lang_id;
++}
++
++void whisper_drop_kept_encoding(struct whisper_context * ctx) {
++    if (ctx->state) {
++        ctx->state->kept_audio_ctx = -1;
++    }
++}
++
+ int whisper_model_n_vocab(struct whisper_context * ctx) {
+     return ctx->model.hparams.n_vocab;
+ }
+@@ -6973,6 +7011,10 @@ int whisper_full_with_state(
+ 
+     result_all.clear();
+ 
++    // canli-ceviri yamasi: whisper_lang_auto_detect_keep'in kodladigi ses yeniden kodlanmiyor
++    const bool use_kept_encoding = state->kept_audio_ctx >= 0 && state->kept_audio_ctx == params.audio_ctx && params.offset_ms == 0;
++    state->kept_audio_ctx = -1;
++
+     if (n_samples > 0) {
+         // compute log mel spectrogram
+         if (whisper_pcm_to_mel_with_state(ctx, state, samples, n_samples, params.n_threads) != 0) {
+@@ -7204,7 +7246,9 @@ int whisper_full_with_state(
+         }
+ 
+         // encode audio features starting at offset seek
+-        if (!whisper_encode_internal(*ctx, *state, seek, params.n_threads, params.abort_callback, params.abort_callback_user_data)) {
++        if (use_kept_encoding && seek == seek_start) {
++            // canli-ceviri yamasi: kodlama whisper_lang_auto_detect_keep'ten
++        } else if (!whisper_encode_internal(*ctx, *state, seek, params.n_threads, params.abort_callback, params.abort_callback_user_data)) {
+             WHISPER_LOG_ERROR("%s: failed to encode\n", __func__);
+             return -6;
+         }
