@@ -67,7 +67,7 @@ class TranslationService : Service() {
         val scope = CanliCeviriApp.of(this).appScope
         val prefs = Prefs(this)
         startJob = scope.launch {
-            engine.start(ConversationEngine.Settings(mode = mode, manual = prefs.manualInput, speechRate = prefs.speechRate, attachAudio = prefs.attachAudio, quality = prefs.quality))
+            engine.start(ConversationEngine.Settings(mode = mode, manual = prefs.manualInput, speechRate = prefs.speechRate, attachAudio = prefs.attachAudio, quality = prefs.quality, readAloud = prefs.readAloud))
             if (!engine.status.value.running) {
                 Log.w(TAG, "motor başlayamadı: ${engine.status.value.error}")
                 stopSelf()

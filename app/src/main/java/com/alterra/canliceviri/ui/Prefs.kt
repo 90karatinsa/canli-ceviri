@@ -32,6 +32,12 @@ class Prefs(context: Context) {
         get() = p.getBoolean("kaliteli", false)
         set(v) = p.edit().putBoolean("kaliteli", v).apply()
 
+    /** Sesli okuma: her zaman / yalnızca konuşma modunda / hiç. */
+    var readAloud: com.alterra.canliceviri.pipeline.ReadAloud
+        get() = runCatching { com.alterra.canliceviri.pipeline.ReadAloud.valueOf(p.getString("sesli_okuma", null) ?: "") }
+            .getOrDefault(com.alterra.canliceviri.pipeline.ReadAloud.ALWAYS)
+        set(v) = p.edit().putString("sesli_okuma", v.name).apply()
+
     /** Geliştirici bilgileri: süreler, dil tespiti, seviye çubukları ekranda görünsün. */
     var devInfo: Boolean
         get() = p.getBoolean("gelistirici", false)

@@ -83,6 +83,7 @@ import com.alterra.canliceviri.Languages
 import com.alterra.canliceviri.pipeline.EngineStatus
 import com.alterra.canliceviri.pipeline.MicMode
 import com.alterra.canliceviri.pipeline.Mode
+import com.alterra.canliceviri.pipeline.ReadAloud
 import com.alterra.canliceviri.pipeline.Speaker
 import com.alterra.canliceviri.pipeline.Utterance
 import com.alterra.canliceviri.pipeline.UtteranceState
@@ -248,11 +249,12 @@ private fun StatusBar(vm: ConversationViewModel, status: EngineStatus) {
             status.paused != null -> "Duraklatıldı: ${status.paused}. Bitince kendiliğinden sürer." to MaterialTheme.colorScheme.error
             status.recording == Speaker.USER -> "Siz konuşuyorsunuz · $elapsed" to MaterialTheme.colorScheme.primary
             status.recording == Speaker.PARTNER -> "Karşı taraf konuşuyor · $elapsed" to MaterialTheme.colorScheme.tertiary
-            status.playing -> "Çeviri okunuyor…" to MaterialTheme.colorScheme.primary
+            // Dinleme hep önde: okuma sürerken de mikrofon açık (yalnızca hoparlör çalarken kapalı).
             status.hearingAnyone && status.hearing == Speaker.USER -> "Siz konuşuyorsunuz" to MaterialTheme.colorScheme.primary
             status.hearingAnyone && status.hearing == Speaker.PARTNER -> "Karşı taraf konuşuyor" to MaterialTheme.colorScheme.tertiary
             status.hearingAnyone -> "Konuşma duyuluyor" to MaterialTheme.colorScheme.primary
             status.busy -> "Çevriliyor…" to MaterialTheme.colorScheme.primary
+            status.playing -> "Dinliyor · çeviri okunuyor" to MaterialTheme.colorScheme.primary
             vm.manualInput -> "Konuşurken düğmeyi basılı tutun" to MaterialTheme.colorScheme.onSurfaceVariant
             else -> "Dinliyor" to MaterialTheme.colorScheme.onSurfaceVariant
         }
@@ -596,6 +598,18 @@ private fun SettingsSheet(vm: ConversationViewModel, onClose: () -> Unit, onFixB
                 if (progress != null) Text(progress, style = MaterialTheme.typography.bodySmall)
                 else OutlinedButton(onClick = vm::downloadQualityModel) { Text("Kaliteli modeli indir (4,6 GB)") }
             }
+
+            Text("Sesli okuma", style = MaterialTheme.typography.titleMedium)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(selected = vm.readAloud == ReadAloud.ALWAYS, onClick = { vm.chooseReadAloud(ReadAloud.ALWAYS) }, label = { Text("Her zaman") })
+                FilterChip(selected = vm.readAloud == ReadAloud.CONVERSATION, onClick = { vm.chooseReadAloud(ReadAloud.CONVERSATION) }, label = { Text("Yalnızca konuşmada") })
+                FilterChip(selected = vm.readAloud == ReadAloud.NEVER, onClick = { vm.chooseReadAloud(ReadAloud.NEVER) }, label = { Text("Kapalı") })
+            }
+            Text(
+                "Dinleme modunda çeviri yalnızca kulaklık takılıyken okunur (hoparlör çalarken mikrofon kapanır). Uzun konuşmalarda okuma " +
+                    "yetişemezse yeni çeviriler ekranda kalır. Kapalıyken her şey anında ve yalnızca ekranda.",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
 
             Text("Okuma hızı", style = MaterialTheme.typography.titleMedium)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

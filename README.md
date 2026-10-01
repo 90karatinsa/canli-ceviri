@@ -32,6 +32,7 @@ Hedef cihaz Samsung Galaxy S24 Ultra; geliştirme Pixel 9 Pro (GrapheneOS) üzer
 | Arka plan | Motor uygulama ömründe (`CanliCeviriApp`); mikrofon türünde ön plan hizmeti ekran kapalıyken de dinletiyor (Android 14+: yalnızca ekrandayken başlatılabilir, arama kesintisinde kapatılmıyor) | `TranslationService.kt` |
 | Kesinti | Arama/susturma 2 Hz denetleniyor (`AudioManager.mode`, `isClientSilenced`, 1 sn sıfır çerçeve); duraklama → mikrofonlar kapanır, okumalar kesilir; bitince yeniden açılır, konuşma yarıda kaldıysa karşı taraftan sabit cümleyle tekrar istenir. Kulaklık takılıp çıkınca mikrofonlar yeniden açılır. Okuma sırasında geçici ses odağı (müzik kısılır) | `pipeline/ConversationEngine.kt` |
 | Giriş biçimleri | İşçi dört iş türü işliyor: ses parçası (VAD ya da bas-konuş düğmesi, konuşan zorlanmış), yazılan metin, tekrar okuma, düzeltme | `pipeline/ConversationEngine.kt` |
+| Sesli okuma kuralı | Ayar: her zaman / yalnızca konuşma modunda / kapalı. Dinleme modunda ayrıca: kulaklık yoksa okunmaz (hoparlör mikrofonu kapatır), bekleyen okuma 2'ye ulaşınca yeni çeviriler yalnızca ekranda (okuma konuşma kadar sürer, sürekli konuşmada yetişemez) | `ConversationEngine.shouldSpeak` |
 | Sorun bildirimi | Son 30 konuşma, olay halkası, ayarlar, cihaz, önceki kapanış nedeni + son parçaların WAV'ları; WhatsApp'a `jid` ile (numara `local.properties` → `BuildConfig.RAPOR_WHATSAPP`) | `report/`, `MainActivity.sendIssue` |
 
 ## Derleme

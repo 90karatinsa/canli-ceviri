@@ -16,6 +16,7 @@ import com.alterra.canliceviri.audio.WavReader
 import com.alterra.canliceviri.llm.HyMtTranslator
 import com.alterra.canliceviri.pipeline.ConversationEngine
 import com.alterra.canliceviri.pipeline.Mode
+import com.alterra.canliceviri.pipeline.ReadAloud
 import com.alterra.canliceviri.pipeline.Speaker
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -61,6 +62,13 @@ class ConversationViewModel(app: Application) : AndroidViewModel(app) {
     var attachAudio by mutableStateOf(prefs.attachAudio); private set
     var quality by mutableStateOf(prefs.quality); private set
     var devInfo by mutableStateOf(prefs.devInfo); private set
+    var readAloud by mutableStateOf(prefs.readAloud); private set
+
+    fun chooseReadAloud(v: ReadAloud) {
+        readAloud = v
+        prefs.readAloud = v
+        engine.setReadAloud(v)
+    }
 
     fun chooseDevInfo(v: Boolean) {
         devInfo = v
@@ -251,7 +259,7 @@ class ConversationViewModel(app: Application) : AndroidViewModel(app) {
             android.util.Log.i("CanliCeviri", "simülasyon: ${clips.size} ses, ${typed.size} metin, seçenekler=$options, liste=$list")
             if (clips.isEmpty() && typed.isEmpty()) return@launch
             val quality = options["kalite"] == "1"
-            engine.simulate(clips, ConversationEngine.Settings(mode = mode, manual = manual, quality = quality), dual, typed)
+            engine.simulate(clips, ConversationEngine.Settings(mode = mode, manual = manual, quality = quality, readAloud = readAloud), dual, typed)
         }
     }
 

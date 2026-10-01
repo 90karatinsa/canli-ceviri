@@ -30,7 +30,7 @@ Diller: İngilizce, Çince, Hintçe, İspanyolca, Arapça, Fransızca, Bengalce,
 
 Ekranı kilitleseniz ya da telefonu cebinize koysanız da çeviri sürer (bildirimde "Çeviri dinliyor" yazar). Bildirimdeki **Durdur** ile de kapatabilirsiniz.
 
-**Dinleme modu**: anons, rehber anlatımı, toplantı gibi tek yönlü durumlar içindir. Duyulan her şey Türkçe olarak yalnızca kulaklığa gelir; hoparlörden hiçbir şey okunmaz.
+**Dinleme modu**: anons, rehber anlatımı, toplantı, video gibi tek yönlü durumlar içindir. Duyulan her şey Türkçeye çevrilip ekrana yazılır; kulaklık takılıysa kulaklığa da okunur. Kulaklık yoksa okunmaz (hoparlör çalarken mikrofon kapanıp konuşma kaçardı). Uzun konuşmalarda okuma yetişemezse yeni çeviriler yalnızca ekranda kalır; ⋮ → Ayarlar → **Sesli okuma** ile okumayı tamamen kapatabilirsiniz.
 
 ## Otomatik algılama şaşırırsa: düğmeyle konuşma
 
@@ -53,7 +53,7 @@ Düğme basılıyken başka hiçbir şey dinlenmez; en çok 20 saniye.
 
 ⋮ → **Sorun bildir**: ne olduğunu kısaca yazın, **WhatsApp'tan gönder**'e basın. Son konuşmalar, süreler ve (açıksa) son konuşmaların ses kaydı bize gelir; WhatsApp'ta geliştirici seçili gelmezse listeden seçip gönderin. Ses kaydını ⋮ → Ayarlar'dan kapatabilirsiniz.
 
-Ayarlar'da ayrıca **Okuma hızı: Yavaş** seçeneği var.
+Ayarlar'da ayrıca **Sesli okuma** (her zaman / yalnızca konuşmada / kapalı) ve **Okuma hızı: Yavaş** seçenekleri var.
 
 ## Kaliteli çeviri (isteğe bağlı, önerilir)
 

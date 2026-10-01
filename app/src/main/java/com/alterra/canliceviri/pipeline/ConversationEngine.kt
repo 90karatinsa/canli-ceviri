@@ -76,6 +76,8 @@ class ConversationEngine(private val context: Context, private val scope: Corout
         val attachAudio: Boolean = true,
         /** Her çeviri kaliteli (7B) modelle: yavaş ama güvenilir. Model yoksa hızlı model kullanılır. */
         val quality: Boolean = false,
+        /** Sesli okuma. Dinleme modunda kulaklık yoksa zaten okunmaz (hoparlör mikrofonu kapatırdı). */
+        val readAloud: ReadAloud = ReadAloud.ALWAYS,
     )
 
     /** İşçinin sırayla işlediği işler: ses parçası, yazılan metin, tekrar okuma, düzeltme. */
@@ -786,6 +788,25 @@ class ConversationEngine(private val context: Context, private val scope: Corout
         settings = settings.copy(attachAudio = v)
     }
 
+    fun setReadAloud(v: ReadAloud) {
+        settings = settings.copy(readAloud = v)
+        note("sesli okuma: $v")
+    }
+
+    /**
+     * Bu çeviri okunacak mı? Ayar kapalıysa hayır. Dinleme modunda: kulaklık yoksa hayır (hoparlör çalarken mikrofon
+     * kapanır, dinlenen kaçar); okuma sırası birikmişse hayır (okuma konuşma kadar sürer, sürekli konuşmada yetişemez).
+     */
+    private fun shouldSpeak(): Boolean {
+        if (!ttsReady) return false
+        return when (settings.readAloud) {
+            ReadAloud.NEVER -> false
+            ReadAloud.CONVERSATION -> settings.mode == Mode.CONVERSATION
+            ReadAloud.ALWAYS -> settings.mode == Mode.CONVERSATION ||
+                (AudioDevices.headsetOutput(context) != null && pendingPlays.get() < LISTEN_PLAY_BACKLOG)
+        }
+    }
+
     private val issueDir: File get() = File(context.getExternalFilesDir(null), "sorun").apply { mkdirs() }
 
     /** Sorun bildirimine eklenecek son parça kayıtları (en yeni önce). */
@@ -1040,7 +1061,7 @@ class ConversationEngine(private val context: Context, private val scope: Corout
                 note = targetNote, detail = detail, typed = typed, quality = usedQuality,
             )
         )
-        if (ttsReady) enqueuePlay(id, who, target, translation, speechEndedAt)
+        if (shouldSpeak()) enqueuePlay(id, who, target, translation, speechEndedAt)
         else update(id) { it.copy(state = UtteranceState.DONE) }
     }
 
@@ -1168,6 +1189,9 @@ class ConversationEngine(private val context: Context, private val scope: Corout
         private const val MANUAL_MAX_MS = 20_000L
         private const val EVENTS_MAX = 200
         private const val SEGMENT_FILES_MAX = 20
+
+        /** Dinleme modunda bekleyen okuma bu sayıya ulaşınca yeni çeviriler yalnızca ekranda kalır. */
+        private const val LISTEN_PLAY_BACKLOG = 2
 
         /** Hızlı modda 7B bu kadar süre kullanılmazsa bellekten bırakılır. */
         private const val QUALITY_IDLE_MS = 3 * 60 * 1000L

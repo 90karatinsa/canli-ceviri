@@ -5,6 +5,9 @@ enum class Mode { CONVERSATION, LISTENING }
 
 enum class Speaker { USER, PARTNER }
 
+/** Çeviriler sesli okunsun mu: her zaman, yalnızca konuşma modunda, hiç (yalnızca ekranda). */
+enum class ReadAloud { ALWAYS, CONVERSATION, NEVER }
+
 enum class MicMode {
     /** Kulaklık mikrofonu (kullanıcı) + telefon mikrofonu (karşı taraf) aynı anda. */
     DUAL,
