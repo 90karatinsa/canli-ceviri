@@ -50,6 +50,9 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -117,7 +120,6 @@ fun ConversationScreen(
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Header(vm, status, onOpenDiagnostics, onOpenSettings = { settingsOpen = true }, onReport = { reportOpen = true })
-            Controls(vm, status)
             if (!vm.setup.ready) SetupCard(vm, onInstallVoices, onInstallGoogleTts)
             if (vm.setup.ready && vm.setup.batteryRestricted && !vm.batteryAsked) BatteryCard(onFixBattery)
             StatusBar(vm, status)
@@ -127,6 +129,7 @@ fun ConversationScreen(
             )
             if (status.running && vm.manualInput) HoldButtons(vm, status)
             if (status.running) TextBar(vm, status)
+            ModeSwitch(vm)
             BigButton(vm, status, onStart)
         }
     }
@@ -139,8 +142,9 @@ fun ConversationScreen(
 @Composable
 private fun Header(vm: ConversationViewModel, status: EngineStatus, onOpenDiagnostics: () -> Unit, onOpenSettings: () -> Unit, onReport: () -> Unit) {
     var menu by remember { mutableStateOf(false) }
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Text("Canlı Çeviri", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text("Canlı Çeviri", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+        LanguagePicker(vm, status)
         Box {
             IconButton(onClick = { menu = true }) { Icon(Icons.Filled.MoreVert, contentDescription = "Menü") }
             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
@@ -159,28 +163,28 @@ private fun Header(vm: ConversationViewModel, status: EngineStatus, onOpenDiagno
     }
 }
 
+/** Konuşma / dinleme modu: başlatmadan önce seçilen şey, Başlat'ın hemen üstünde. Çalışırken de değiştirilebilir. */
 @Composable
-private fun Controls(vm: ConversationViewModel, status: EngineStatus) {
-    // Mod çipleri ve dil düğmesi ayrı satırlarda: dar ekranda (S24 Ultra) tek satıra sığmıyor.
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-        FilterChip(selected = vm.mode == Mode.CONVERSATION, onClick = { vm.selectMode(Mode.CONVERSATION) }, label = { Text("Konuşma") })
-        FilterChip(selected = vm.mode == Mode.LISTENING, onClick = { vm.selectMode(Mode.LISTENING) }, label = { Text("Dinleme modu") })
+private fun ModeSwitch(vm: ConversationViewModel) {
+    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+        SegmentedButton(
+            selected = vm.mode == Mode.CONVERSATION, onClick = { vm.selectMode(Mode.CONVERSATION) },
+            shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
+        ) { Text("Konuşma") }
+        SegmentedButton(
+            selected = vm.mode == Mode.LISTENING, onClick = { vm.selectMode(Mode.LISTENING) },
+            shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
+        ) { Text("Dinleme modu") }
     }
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) { LanguagePicker(vm, status) }
 }
 
 @Composable
 private fun LanguagePicker(vm: ConversationViewModel, status: EngineStatus) {
     var open by remember { mutableStateOf(false) }
-    val label = when {
-        vm.partnerLang != null -> Languages.FOREIGN.first { it.code == vm.partnerLang }.nameTr
-        status.partnerLang != null -> (Languages.FOREIGN.firstOrNull { it.code == status.partnerLang }?.nameTr ?: status.partnerLang) +
-            if (status.partnerLangLocked) "" else "?"
-        else -> "Otomatik"
-    }
+    val label = vm.partnerLang?.let { code -> Languages.FOREIGN.first { it.code == code }.nameTr } ?: "Otomatik"
     Box {
         OutlinedButton(onClick = { open = true }, contentPadding = PaddingValues(horizontal = 12.dp)) {
-            Text("Karşı taraf: $label ▾", maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
+            Text("$label ▾", maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
         }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
             DropdownMenuItem(text = { Text("Otomatik algıla") }, onClick = { open = false; vm.selectPartnerLang(null) })
@@ -272,7 +276,13 @@ private fun StatusBar(vm: ConversationViewModel, status: EngineStatus) {
                     MicMode.SINGLE -> "telefon mikrofonu"
                     MicMode.NONE -> ""
                 }
-                Text(mics, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                // Otomatik dilde tespit edilen dil burada (düğme hep "Otomatik" yazar).
+                val detected = if (vm.partnerLang == null) status.partnerLang?.let { c -> Languages.FOREIGN.firstOrNull { it.code == c }?.nameTr } else null
+                Text(
+                    listOfNotNull(detected?.let { if (status.partnerLangLocked) it else "$it?" }, mics).joinToString(" · "),
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                )
             }
         }
         if (status.running && vm.devInfo) {
@@ -342,7 +352,7 @@ private fun Conversation(
         Box(modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
             Text(
                 if (manual) "Başlat'a basın. Konuşurken \"Ben konuşuyorum\", karşı taraf konuşurken \"Karşı taraf konuşuyor\" düğmesini basılı tutun."
-                else "Başlat'a basın. Karşı taraf konuşunca Türkçesi kulaklıktan, siz konuşunca çevirisi hoparlörden gelir.",
+                else "Başlat'a basın. Karşı taraf konuşunca Türkçesi kulaklıktan, siz konuşunca çevirisi hoparlörden gelir. Dili uygulama kendisi bulur.",
                 textAlign = TextAlign.Center,
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,

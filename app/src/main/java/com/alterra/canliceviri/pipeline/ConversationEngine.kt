@@ -200,13 +200,12 @@ class ConversationEngine(private val context: Context, private val scope: Corout
     private var userMeanDb = 12f
     private var partnerMeanDb = -6f
 
-    // Karşı tarafın dili: elle seçilmiş ya da tespitle kilitlenmiş.
+    // Karşı tarafın dili: elle seçilmiş ya da her cümlede tespit edilip son cümlelerin üstel ortalamasıyla seçilmiş.
     @Volatile private var partnerLang: String? = null
-    @Volatile private var partnerLocked = false
+    /** Ortalama belirgin bir dilde toplandı (elle seçimde her zaman true). */
+    @Volatile private var partnerConfident = false
     private var manualPartnerLang = false
-    private val langVotes = HashMap<String, Float>()
-    /** Karşı taraf bu kadar süre konuşmazsa (yeni biri gelmiş olabilir) otomatik dil kilidi çözülür. */
-    private var lastPartnerAt = 0L
+    private val langScore = HashMap<String, Float>()
 
     private class PlayItem(val utteranceId: Long, val text: String, val lang: Lang, val device: AudioDeviceInfo?, val speechEndedAt: Long)
 
@@ -292,9 +291,24 @@ class ConversationEngine(private val context: Context, private val scope: Corout
     fun setPartnerLanguage(code: String?) {
         manualPartnerLang = code != null
         partnerLang = code
-        partnerLocked = code != null
-        langVotes.clear()
+        partnerConfident = code != null
+        langScore.clear()
         _status.update { it.copy(partnerLang = code, partnerLangLocked = code != null) }
+    }
+
+    /**
+     * Otomatik dil: her karşı taraf cümlesinin olasılıkları üstel ortalamaya katılır (eski cümleler [LANG_DECAY] ile
+     * söner, ~3 cümle hafıza). Dönüş: ortalamanın en yüksek dili. Kişi değişince birkaç cümlede yeni dile geçer.
+     */
+    private fun observeLang(foreignProbs: Map<String, Float>): String? {
+        for (k in langScore.keys.toList()) langScore[k] = langScore.getValue(k) * LANG_DECAY
+        foreignProbs.forEach { (l, p) -> langScore[l] = (langScore[l] ?: 0f) + p }
+        val best = langScore.maxByOrNull { it.value } ?: return null
+        val total = langScore.values.sum().coerceAtLeast(1e-6f)
+        partnerLang = best.key
+        partnerConfident = best.value / total >= 0.6f && best.value >= 0.8f
+        _status.update { it.copy(partnerLang = partnerLang, partnerLangLocked = partnerConfident) }
+        return best.key
     }
 
     /** Seslendirme motorunda hangi dillerin internetsiz sesi var (kurulum kartı için). */
@@ -376,7 +390,7 @@ class ConversationEngine(private val context: Context, private val scope: Corout
         _status.update {
             it.copy(
                 running = true, micMode = mode, micInfo = front.info,
-                partnerLang = partnerLang, partnerLangLocked = partnerLocked,
+                partnerLang = partnerLang, partnerLangLocked = partnerConfident,
                 error = if (!ttsReady) "Seslendirme motoru açılamadı; çeviriler yalnızca ekranda" else null,
             )
         }
@@ -583,8 +597,6 @@ class ConversationEngine(private val context: Context, private val scope: Corout
             while (System.currentTimeMillis() < gateUntil + 100) delay(50)
         }
         for (clip in clips) {
-            // Test sesleri farklı dillerde; her biri ayrı algılansın.
-            if (!manualPartnerLang) unlockPartnerLang()
             val pcm = ShortArray(clip.pcm.size) { (clip.pcm[it] * 32767f).toInt().coerceIn(-32768, 32767).toShort() }
             if (settings.manual) {
                 beginManual(if (clip.isUser) Speaker.USER else Speaker.PARTNER)
@@ -878,7 +890,7 @@ class ConversationEngine(private val context: Context, private val scope: Corout
                 it.copy(
                     levelUser = lu, levelPartner = lp,
                     hearingAnyone = seg?.speaking == true, hearing = hearing,
-                    partnerLang = partnerLang, partnerLangLocked = partnerLocked,
+                    partnerLang = partnerLang, partnerLangLocked = partnerConfident,
                 )
             }
             delay(100)
@@ -923,19 +935,18 @@ class ConversationEngine(private val context: Context, private val scope: Corout
 
             var lang: String
             var detail: String? = null
-            if (!manualPartnerLang && partnerLocked && System.currentTimeMillis() - lastPartnerAt > RELOCK_AFTER_MS) unlockPartnerLang()
             val forced = seg.forcedSpeaker != null
+            val manual = manualPartnerLang && partnerLang != null
             if (speaker == Speaker.USER) {
                 lang = "tr"
-            } else if (partnerLocked && partnerLang != null && (speaker == Speaker.PARTNER || settings.mode == Mode.LISTENING)) {
+            } else if (manual && (speaker == Speaker.PARTNER || settings.mode == Mode.LISTENING)) {
                 lang = partnerLang!!
             } else {
-                // Dil tespiti: Türkçe çıkarsa konuşan kullanıcıdır (tek mikrofonda asıl yöntem bu).
-                // Düğmeyle "karşı taraf" dendiyse Türkçe aday değil.
+                // Dil tespiti her karşı taraf cümlesinde (kodlayıcı yazıya dökmeyle paylaşıldığı için ucuz).
+                // Türkçe çıkarsa konuşan kullanıcıdır (tek mikrofonda asıl yöntem bu); düğmeyle "karşı taraf" dendiyse Türkçe aday değil.
                 val candidates = when {
-                    forced -> Languages.FOREIGN.map { it.code }
-                    settings.mode == Mode.LISTENING -> Languages.ALL.map { it.code }
-                    partnerLocked && partnerLang != null -> listOf("tr", partnerLang!!)
+                    manual -> listOf("tr", partnerLang!!)
+                    forced || speaker == Speaker.PARTNER -> Languages.FOREIGN.map { it.code }
                     else -> Languages.ALL.map { it.code }
                 }
                 val lidPcm = pcmFor(speaker)
@@ -947,16 +958,22 @@ class ConversationEngine(private val context: Context, private val scope: Corout
                     speaker = Speaker.USER
                     lang = "tr"
                 } else {
-                    val foreign = guess.probs.filterKeys { it != "tr" }.maxByOrNull { it.value }
-                    lang = foreign?.key ?: "en"
                     speaker = Speaker.PARTNER
-                    if (best.first == "tr" && settings.mode == Mode.LISTENING) lang = "tr"
-                    if (!manualPartnerLang && lang != "tr") vote(lang, foreign?.value ?: 0f)
-                    detail = "dil: ${lang} ${(100 * (foreign?.value ?: 0f)).toInt()}% (${guess.ms.toInt()} ms)"
+                    val foreign = guess.probs.filterKeys { it != "tr" }
+                    val top = foreign.maxByOrNull { it.value }
+                    val averaged = if (!manual) observeLang(foreign) else null
+                    lang = when {
+                        best.first == "tr" && settings.mode == Mode.LISTENING -> "tr"
+                        manual -> partnerLang!!
+                        top != null && top.value >= LANG_SURE -> top.key // bu cümle kendinden emin
+                        averaged != null -> averaged // değilse son cümlelerin ortalaması
+                        else -> top?.key ?: "en"
+                    }
+                    detail = "dil: ${top?.key} ${(100 * (top?.value ?: 0f)).toInt()}% (${guess.ms.toInt()} ms)" +
+                        if (lang != top?.key) " → ortalama: $lang" else ""
                 }
             }
             val who = speaker ?: Speaker.PARTNER
-            if (who == Speaker.PARTNER) lastPartnerAt = System.currentTimeMillis()
             archiveSegment(id, who, lang, seg)
             val pcm = pcmFor(who)
             // Düğmeyle alınan parçada VAD yok: içinde konuşma yoksa (sessiz oda) Whisper uydurur; atla.
@@ -1103,22 +1120,6 @@ class ConversationEngine(private val context: Context, private val scope: Corout
         return s
     }
 
-    private fun unlockPartnerLang() {
-        partnerLocked = false
-        partnerLang = null
-        langVotes.clear()
-        _status.update { it.copy(partnerLang = null, partnerLangLocked = false) }
-    }
-
-    /** Karşı tarafın dili: tek tespitte %85 ya da aynı dile iki oy çıkınca kilitlenir. */
-    private fun vote(lang: String, prob: Float) {
-        if (partnerLocked) return
-        langVotes[lang] = (langVotes[lang] ?: 0f) + prob
-        if (partnerLang == null || (langVotes[lang] ?: 0f) > (langVotes[partnerLang] ?: 0f)) partnerLang = lang
-        if (prob >= 0.85f || (langVotes[lang] ?: 0f) >= 1.5f) partnerLocked = true
-        _status.update { it.copy(partnerLang = partnerLang, partnerLangLocked = partnerLocked) }
-    }
-
     // ------------------------------------------------------------------ seslendirme
 
     private suspend fun speak(item: PlayItem) {
@@ -1190,7 +1191,11 @@ class ConversationEngine(private val context: Context, private val scope: Corout
         const val DEFAULT_ASR_MODEL = "ggml-small-q8_0.bin"
         const val VAD_MODEL = "ggml-silero-v6.2.0.bin"
         const val GOOGLE_TTS = "com.google.android.tts"
-        private const val RELOCK_AFTER_MS = 90_000L
+        /** Dil ortalaması: eski cümlelerin ağırlığı her yeni cümlede bu katsayıyla söner. */
+        private const val LANG_DECAY = 0.6f
+
+        /** Cümlenin kendi tespiti bu olasılığın üstündeyse ortalamaya bakılmaz. */
+        private const val LANG_SURE = 0.75f
 
         /** Bas-konuşta en kısa ve en uzun kayıt (Whisper penceresi 30 sn; pay bırakılıyor). */
         private const val MANUAL_MIN_MS = 250

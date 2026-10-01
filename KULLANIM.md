@@ -22,11 +22,11 @@ Diller: İngilizce, Çince, Hintçe, İspanyolca, Arapça, Fransızca, Bengalce,
 
 ## Kullanım
 
-1. Kulaklığı takın, **Konuşma**'yı seçin ve **Başlat**'a basın.
+1. Kulaklığı takın, Başlat'ın üstündeki anahtar **Konuşma**'da olsun, **Başlat**'a basın.
 2. Telefonu karşınızdakine doğru tutun ya da aranıza koyun.
 3. Sözünüzü bitirince yarım saniye susun; çeviri birkaç saniye içinde gelir.
 4. Telefon hoparlörden konuşurken araya girmeyin; o sırada mikrofonlar kapalıdır.
-5. Karşınızdakinin dilini uygulama ilk cümlede kendisi bulur. Yanlış bulursa üstteki dil düğmesinden elle seçin; seçim bir sonraki açılışta da kalır.
+5. Karşınızdakinin dilini uygulama her cümlede kendisi bulur (üstteki düğme "Otomatik"; bulunan dil durum satırında görünür). Kişi değişince birkaç cümlede yeni dile geçer. Yanlış buluyorsa üstteki düğmeden dili elle seçin; seçim bir sonraki açılışta da kalır.
 
 Ekranı kilitleseniz ya da telefonu cebinize koysanız da çeviri sürer (bildirimde "Çeviri dinliyor" yazar). Bildirimdeki **Durdur** ile de kapatabilirsiniz.
 
