@@ -1,127 +1,118 @@
-# Canlı Çeviri
+# Canlı Çeviri — Offline Live Speech Translator for Android
 
-*Offline live speech translation for Android (Turkish ↔ 18 languages), fully on-device: whisper.cpp + Hy-MT2 (llama.cpp) + system TTS. Source-visible under the PolyForm Noncommercial license; see [Lisans](#lisans).*
+**Real-time, two-way voice translation that runs 100% on the phone.** No internet, no cloud API, no account, no telemetry.
+Speech recognition with **whisper.cpp**, machine translation with **Tencent Hy-MT2** on **llama.cpp**, speech output with on-device
+**text-to-speech**. Built for face-to-face conversations while travelling abroad.
 
-Android için internetsiz ve ücretsiz canlı sesli çeviri. Yurt dışında birebir konuşma için:
+**Keywords:** offline translator, offline speech translation, real-time voice translation, speech-to-speech translation, live interpreter app,
+on-device AI, edge AI, local LLM, whisper.cpp Android, llama.cpp Android, GGUF, Hy-MT2, Silero VAD, speech recognition (ASR),
+machine translation (MT), text-to-speech (TTS), Kotlin, Jetpack Compose, JNI, Android NDK, privacy-first, no internet required.
 
-- Karşı taraf konuşur, Türkçe çeviri **kulaklıktan** gelir.
-- Kullanıcı Türkçe konuşur, çeviri karşı tarafın dilinde **telefon hoparlöründen** çalar.
-- Kulaklığın mikrofonu ve telefonun mikrofonu aynı anda dinlenir. Hangisinde ses daha güçlüyse konuşan odur, sıra için butona basılmaz.
+## How it works
 
-Diller: Türkçe ↔ İngilizce, Çince, Hintçe, İspanyolca, Arapça, Fransızca, Bengalce, Portekizce, Rusça, Endonezce, Almanca, İtalyanca, Hollandaca, Lehçe, Çekçe, Ukraynaca, Japonca, Korece (Yunanca çeviri modelinde yok; Farsça'nın internetsiz Google sesi yok).
+- The other person speaks; the translation into Turkish plays in **your headset**.
+- You speak Turkish; the translation in their language plays from the **phone speaker**.
+- The headset mic and the phone mic are recorded at the same time. Whoever is louder on which mic is the speaker, so nobody
+  presses a button to take turns. With a single mic, the speaker is decided by language detection.
+- **Listening mode** translates everything it hears (announcements, interviews, tour guides) continuously into Turkish.
 
-Hedef cihaz Samsung Galaxy S24 Ultra; geliştirme Pixel 9 Pro (GrapheneOS) üzerinde.
+**Languages:** Turkish ↔ English, Chinese, Hindi, Spanish, Arabic, French, Bengali, Portuguese, Russian, Indonesian, German,
+Italian, Dutch, Polish, Czech, Ukrainian, Japanese, Korean (18 languages).
 
-## Aşamalar
+## Features
 
-1. **Cihaz testi (şu an):** uygulamanın dayandığı üç platform davranışını telefonda ölçer.
-   - İki mikrofon aynı anda ayrı ayrı kaydedilebiliyor mu?
-   - Kulaklık takılıyken ses ayrıca telefon hoparlörüne verilebiliyor mu?
-   - Sistem seslendirmesi istenen cihaza gidiyor mu, hangi diller internetsiz okunabiliyor?
-2. **Çekirdek çeviri (offline):** ses algılama (Silero VAD), konuşma tanıma (Whisper, telefonda), çeviri, sistem seslendirmesi; konuşma ve dinleme modları.
-3. **S24 Ultra iyileştirmeleri:** NPU'da Whisper, gürültü temizleme, kaliteli çeviri modu.
+- Fully offline speech-to-speech translation pipeline: VAD → ASR → MT → TTS
+- Dual-microphone speaker separation (headset mic + phone mic), automatic turn-taking
+- Continuous per-sentence language identification with exponential averaging; manual override
+- Two translation models: fast **Hy-MT2-1.8B** for live speech, optional high-quality **Hy-MT2-7B** for typed text and re-translation
+- Push-to-talk buttons as a fallback, typed input in both directions, edit and re-speak, full-screen text for showing to people
+- Works with the screen off (microphone foreground service); pauses on phone calls and asks the other side to repeat
+- Ducks music while speaking, adjustable speech rate, speaker volume boost
+- One-tap issue report with logs and audio clips, shared via WhatsApp or any app
 
-## Yapı
+## Architecture
 
-| Parça | Ne kullanılıyor | Nerede |
+| Stage | Implementation | Code |
 |---|---|---|
-| Mikrofon | Kulaklık mikrofonu ("görüşme" türü) + telefon mikrofonu ("tanıma" türü); olmazsa tek mikrofon | `pipeline/AudioFrontEnd.kt` |
-| Konuşma algılama | Silero VAD (whisper.cpp içinden, 32 ms çerçeve) | `pipeline/Segmenter.kt` |
-| Mikrofon efektleri | Telefon mikrofonuna sistemin gürültü bastırma + otomatik kazanç efektleri (ayarla kapatılabilir); kulaklık mikrofonunda VOICE_COMMUNICATION kaynağı zaten uyguluyor | `audio/MicCapture.kt` |
-| Whisper istemi | Türkçede nötr cümle + seyahat sözlüğü; diğer dillerde dil başına seyahat sözlüğü (`Lang.glossary`). Ölçümde `sozluk=1` ile açılır; test cümleleri sözlük kelimeleri içerdiği için o ölçüm iyimserdir | `Languages.kt`, `ConversationEngine.processAudio` |
-| Kim konuştu | Çift mikrofonda iki kaydın seviye farkı; tek mikrofonda dil (Türkçe mi) | `pipeline/ConversationEngine.kt` |
-| Karşı tarafın dili | Her karşı taraf cümlesinde tespit (kodlayıcı paylaşıldığı için ucuz); cümlenin kendi tespiti ≥%75 ise o, değilse son cümlelerin üstel ortalaması (katsayı 0,6, ~3 cümle hafıza). Kilit/çözülme yok; kişi değişince birkaç cümlede geçer. Elle seçim her zaman mümkün | `ConversationEngine.observeLang` |
-| Yazıya dökme | Whisper small (q8_0), whisper.cpp (yamalı), telefonun işlemcisinde | `app/src/main/cpp/whisper_jni.cpp`, `asr/` |
-| Çeviri | Tencent Hy-MT2-1.8B (Q4_K_M, 1,1 GB), llama.cpp, telefonun işlemcisinde; Google servisi ve telemetri yok. İsteğe bağlı Hy-MT2-7B (Q4_K_M, 4,6 GB): "kaliteli" mod, yazılı metin, düzeltme ve baloncuktan "kaliteli çevir". Kaliteli modda 1,8B bırakılır; hızlı modda 7B 3 dk boşta kalınca ya da bellek daralınca bırakılır | `llm/` modülü, `pipeline/ConversationEngine.kt` |
-| Seslendirme | Google'ın ses motoru (Speech Services by Google; yoksa sistemin motoru); ses parçaları uygulamaya alınıp istenen cihaza çalınıyor. Dilin sesi yoksa başka dilin sesiyle okunmuyor; hoparlör bacağı yumuşak sınırlayıcıyla +5 dB | `audio/TtsEngine.kt`, `audio/PcmPlayer.kt` |
-| Arka plan | Motor uygulama ömründe (`CanliCeviriApp`); mikrofon türünde ön plan hizmeti ekran kapalıyken de dinletiyor (Android 14+: yalnızca ekrandayken başlatılabilir, arama kesintisinde kapatılmıyor) | `TranslationService.kt` |
-| Kesinti | Arama/susturma 2 Hz denetleniyor (`AudioManager.mode`, `isClientSilenced`, 1 sn sıfır çerçeve); duraklama → mikrofonlar kapanır, okumalar kesilir; bitince yeniden açılır, konuşma yarıda kaldıysa karşı taraftan sabit cümleyle tekrar istenir. Kulaklık takılıp çıkınca mikrofonlar yeniden açılır. Okuma sırasında geçici ses odağı (müzik kısılır) | `pipeline/ConversationEngine.kt` |
-| Giriş biçimleri | İşçi dört iş türü işliyor: ses parçası (VAD ya da bas-konuş düğmesi, konuşan zorlanmış), yazılan metin, tekrar okuma, düzeltme | `pipeline/ConversationEngine.kt` |
-| Sesli okuma kuralı | Ayar: her zaman / yalnızca konuşma modunda / kapalı. Dinleme modunda ayrıca: kulaklık yoksa okunmaz (hoparlör mikrofonu kapatır), bekleyen okuma 2'ye ulaşınca yeni çeviriler yalnızca ekranda (okuma konuşma kadar sürer, sürekli konuşmada yetişemez) | `ConversationEngine.shouldSpeak` |
-| Sorun bildirimi | Son 30 konuşma, olay halkası, ayarlar, cihaz, önceki kapanış nedeni + son parçaların WAV'ları; WhatsApp'a `jid` ile (numara `local.properties` → `BuildConfig.RAPOR_WHATSAPP`) | `report/`, `MainActivity.sendIssue` |
+| Audio capture | Headset mic (`VOICE_COMMUNICATION`) + phone mic (`VOICE_RECOGNITION`), falls back to one mic; optional NoiseSuppressor and AutomaticGainControl | `pipeline/AudioFrontEnd.kt`, `audio/MicCapture.kt` |
+| Voice activity detection | Silero VAD (via whisper.cpp), 32 ms frames | `pipeline/Segmenter.kt` |
+| Speaker attribution | Level difference between the two mics; with one mic, language identification | `pipeline/ConversationEngine.kt` |
+| Language identification | Whisper language detection on every sentence, encoder output reused for transcription (patched whisper.cpp) | `scripts/whisper-kodlama-paylasimi.patch` |
+| Speech recognition | Whisper **small** (q8_0), whisper.cpp on CPU, shortened audio context, loop breaker, per-language travel glossary prompt | `app/src/main/cpp/whisper_jni.cpp`, `asr/` |
+| Translation | Tencent Hy-MT2-1.8B (Q4_K_M, 1.1 GB) via llama.cpp with KV-cache prefix reuse; optional Hy-MT2-7B (Q4_K_M, 4.6 GB), unloaded when idle or low on memory | `llm/` |
+| Text-to-speech | Google Speech Services offline voices (or the system engine); audio is synthesized to PCM and routed to the right output device | `audio/TtsEngine.kt`, `audio/PcmPlayer.kt` |
+| Background | App-scoped engine + microphone foreground service, wake lock, battery-optimization exemption | `TranslationService.kt`, `CanliCeviriApp.kt` |
+| Interruptions | Call / mic-silencing detection, audio focus with ducking, headset plug/unplug handling | `pipeline/ConversationEngine.kt` |
 
-## Derleme
+## Performance (Pixel 9 Pro, CPU only, 4 threads)
+
+| Measure | Result |
+|---|---|
+| Language detection + transcription of a 3–5 s sentence | 0.7–0.9 s |
+| Turkish character error rate (Whisper small) | 4.6 % |
+| Average CER over the other 18 languages | ~3 % |
+| Translation, Hy-MT2-1.8B | 1.7 s per sentence on average |
+| Translation, Hy-MT2-7B | 13.9 s per sentence on average, noticeably more accurate |
+| End of speech → first translated audio | 2.1–3.1 s |
+| Continuous listening, 36 s / 8 sentences | 8/8 captured and translated, no backlog |
+
+Engineering notes from the measurements:
+
+- **whisper.cpp flash-attention bug:** with flash attention on, the padded audio context is not masked, so a shortened context
+  that is not a multiple of 256 attends to stale audio. Turkish CER went from 3 % to 20–45 %. Flash attention is disabled.
+- **Repetition loops** in short contexts are cut when the last 6 tokens repeat; a truncated sentence is decoded again with a larger context.
+- Beam search (5) gave no gain for Turkish and halved decoding speed. Whisper large-v3-turbo takes over 20 s per sentence on CPU.
+- Whisper medium (q5_0) lowers Turkish CER to 1.1 % but takes 4–19 s per sentence, so it is not used.
+
+## Build
 
 ```bash
-scripts/kurulum.sh    # whisper.cpp (yamalı) ve llama.cpp kaynak kodu (sabit sürümler)
+scripts/kurulum.sh    # fetches pinned whisper.cpp (patched) and llama.cpp sources
 export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
 ./gradlew assembleDebug
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-`local.properties`'e `rapor.whatsapp=905…` (sorun bildiriminin gideceği numara) eklenir; boş kalırsa paylaşımda kişi elle seçilir.
-
-**Sürüm imzası:** müşteri APK'sı projeye özel anahtarla imzalanır: `local.properties` → `imza.dosya` (örn. `~/.android/canli-ceviri.jks`), `imza.takma`, `imza.parola`. Anahtar ve parola git dışıdır; **yedekleyin**, kaybolursa müşterinin telefonuna güncelleme kurulamaz (uygulama silinip modeller yeniden indirilir). Anahtar yoksa derleme geliştirme anahtarıyla imzalar ve uyarır; o APK müşteriye gönderilmez.
-
-```bash
-keytool -genkeypair -keystore ~/.android/canli-ceviri.jks -alias canliceviri -keyalg RSA -keysize 2048 -validity 10000
-```
-
-Modeller ilk açılışta uygulamadan indirilir. Geliştirirken adb ile de konabilir:
+Models are downloaded by the app on first launch. During development they can be pushed with adb:
 
 ```bash
 adb push ggml-small-q8_0.bin ggml-silero-v6.2.0.bin Hy-MT2-1.8B-Q4_K_M.gguf /sdcard/Android/data/com.alterra.canliceviri/files/models/
 ```
 
-## Geliştirici komutları (yalnızca debug sürüm)
+Optional `local.properties` keys: `rapor.whatsapp` (phone number that issue reports are sent to) and
+`imza.dosya` / `imza.takma` / `imza.parola` (release keystore path, alias, password). Without a keystore, release builds are
+signed with the debug key and a warning is printed.
+
+### Debug-build developer commands
 
 ```bash
-tools/test-sesleri.sh <adb-seri>   # macOS sesleriyle 11 dilde test cümleleri üretip telefona gönderir
-adb shell 'am start --activity-single-top -n com.alterra.canliceviri/.MainActivity --es bench "small;diller=tr;ctx=auto,768"'
-adb shell 'am start --activity-single-top -n com.alterra.canliceviri/.MainActivity --es mt "threads=4"'
-adb shell 'am start --activity-single-top -n com.alterra.canliceviri/.MainActivity --es simule "tr1,en,tr2,es"'
-adb shell 'am start --activity-single-top -n com.alterra.canliceviri/.MainActivity --es simule "karsi=bn;bn,tr1"'   # karşı tarafın dili elle
-adb shell 'am start --activity-single-top -n com.alterra.canliceviri/.MainActivity --es simule "dugme:tr1,en"'       # bas-konuş: her ses bir basış
-adb shell 'am start --activity-single-top -n com.alterra.canliceviri/.MainActivity --es simule "karsi=en;yaz=tr:Merhaba|en:Hello;tr3"'  # yazılı giriş
+tools/test-sesleri.sh <adb-serial>   # generates test sentences with macOS voices and pushes them to the phone
+adb shell 'am start --activity-single-top -n com.alterra.canliceviri/.MainActivity --es bench "small;diller=tr;ctx=auto,768"'   # ASR benchmark
+adb shell 'am start --activity-single-top -n com.alterra.canliceviri/.MainActivity --es mt "threads=4"'                          # MT benchmark
+adb shell 'am start --activity-single-top -n com.alterra.canliceviri/.MainActivity --es simule "tr1,en,tr2,es"'                  # end-to-end simulation
 adb logcat -s CanliCeviri CanliCeviriBench
 ```
 
-Sonuçlar `files/bench.txt`, `files/mt.txt` ve logcat'e yazılır.
+## Requirements
 
-## Ölçümler (Pixel 9 Pro, işlemci, 4 çekirdek)
+- Android 8.0+ (arm64-v8a), 8 GB RAM recommended; 12 GB for the 7B quality model
+- About 2 GB of storage for the base models, 6.5 GB with the quality model
+- A wired or Bluetooth headset with a microphone for two-way conversation
 
-Süreler arka planda işlemciyi %100-370 kullanan bir uygulamayla ölçüldü; temiz telefonda daha kısa olmalı. Hata oranları (CER) bundan etkilenmez.
+The app UI is in Turkish. A Turkish end-user guide is in [KULLANIM.md](KULLANIM.md).
 
-- **Whisper small, kısaltılmış bağlam (ses + 1 sn), flash attention kapalı:** 3-5 sn'lik cümlede dil tespiti + yazıya dökme toplam 0,7-0,9 sn (kodlayıcı bir kez çalışıyor).
-  - Türkçe CER %4,6 (8 cümle).
-  - İngilizce, İspanyolca, Arapça, Fransızca, Rusça, Endonezce %0; Portekizce %2, Hintçe %10, Çince %14. Dil tespiti 17/18.
-  - Almanca %1,5, İtalyanca %0, Hollandaca %6, Lehçe %2, Çekçe %3, Ukraynaca %0, Japonca %4, Korece %6 (hepsi 0,6-0,9 sn, dil tespiti dahil). Ukraynaca dil tespitinde Rusça sanılıyor (%91); elle seçilince yazı hatasız. Çeviri (Hy-MT2) bu dillerde ön planda 1,5-2,3 sn; arka planda ekran kapalıyken ölçülen 5-15 sn sistem kısıtlamasından (ön plan hizmeti olmadan çalıştırılmıştı).
-  - Bengalce: Whisper small Bengalceyi Devanagari harfleriyle yazıyor; Bengal alfabesine çevriliyor ama ses hataları yüzünden çeviri güvenilmez. Dil tespiti Bengalceyi Hintçe sanıyor; elle seçilmeli. Türkçe → Bengalce yönü sorunsuz.
-- **whisper.cpp flash attention hatası:** açıkken kodlayıcı ve çapraz dikkat bağlamı 256'nın katına dolduruyor ama dolguyu maskelemiyor. Kısaltılmış bağlam 256'nın katı değilse model önceki seslerden kalan verilere de bakıyor; Türkçe CER %3'ten %20-45'e çıkıyordu. Bu yüzden kapalı (`asr/Whisper.kt`).
-- **Döngü:** kısaltılmış bağlamda Whisper bazen cümleyi bitirip baştan tekrar ediyor. Son 6 belirteç daha önce geçtiyse çözme kesiliyor; cümle yarıda kaldıysa 768'lik bağlamla bir kez daha çözülüyor.
-- **Dil tespiti + yazıya dökme tek kodlama:** whisper.cpp yaması (`scripts/whisper-kodlama-paylasimi.patch`) dil tespitinin kodladığı sesi yazıya dökmede yeniden kullanıyor; tek mikrofonda cümle başına ~0,5 sn kazanç.
-- Işın araması (5) Türkçede fayda etmedi (%3,9'a karşı %4,0), çözmeyi yarı yarıya yavaşlattı. Tam bağlam (30 sn) CER %4,0 ama 3 kat yavaş; 768 bağlam %3,2, 2 kat yavaş.
-- Whisper large-v3-turbo (q5_0) işlemcide cümle başına 20 sn'den fazla: kullanılamaz.
-- **Çeviri modeli karşılaştırması (54 cümle, Pixel, ön planda):** 1,8B ortalama 1,7 sn; 7B ortalama 13,9 sn (kısa cümle 6-8 sn, Hintçe/Bengalce gibi uzun yazımlılar 50 sn). Kalite: "Uçağım üçte kalkıyor" cümlesinde 1,8B 18 dilin 10'unda saati bozdu, 7B hepsinde doğru. 7B yüklemesi ~10 sn, iki model birlikte ~8 GB RSS; takas baskısında 7B çevirisi dakikalara çıkıyor.
-- **Kesintisiz dinleme (dinleme modu, 36 sn'lik 8 cümlelik tek parça, `simule "akis"`):** 8/8 cümle ayrı parça olarak yakalandı ve doğru dilde çevrildi; cümle bitiminden yazıya 1,2-3,2 sn, çeviriye +1,3-1,7 sn; kuyruk birikmedi (işleme gerçek zamandan hızlı).
-- **Uçtan uca (simülasyon, tek mikrofon, dil tespiti dahil):** sessizlik algılandıktan sonra ilk çeviri sesi 2,1-3,1 sn (ağır arka plan yükü altında). Çeviri (Hy-MT2) cümle başına 0,9-1,9 sn; Bengalce gibi uzun yazımlı dillerde 3-4 sn.
-- **Seslendirme (Google TTS, 11 dilin internetsiz sesi):** Başlat'ta Türkçe ve karşı tarafın dili sessizce bir kez sentezleniyor; ilk Türkçe okuma 1,4 sn'den 0,05 sn'ye indi. Denetim: `--es ses 1` her dili hoparlörden okuyup kullanılan sesi `files/ses.txt`'ye yazar.
-- İki dahili mikrofon: yalnızca biri "görüşme" türündeyse aynı anda ayrı açılabiliyor.
+## License
 
-## Cihaz testi nasıl yapılır
+Source-available under the **PolyForm Noncommercial License 1.0.0** (see [LICENSE](LICENSE)): free for personal, educational and
+research use. **Commercial use, resale or commercial distribution requires written permission.**
 
-1. Mikrofonlu kulaklığı takın, uygulamayı açın, mikrofon iznini verin.
-2. **1 · İki mikrofon:** "Testi başlat" deyin; önce kulaklığın mikrofonuna, sonra telefonun alt ucuna konuşun (18 sn).
-3. **2 · Kulaklık / hoparlör:** medya sesini orta seviyeye getirip "Sırayla test et" deyin; telefon bipleri kendisi dinleyip ölçer.
-4. **3 · Sesli okuma:** Türkçe → kulaklık ve yabancı dil → hoparlör düğmelerini deneyin.
-5. "Raporu paylaş" ile sonucu gönderin. Rapor ayrıca telefonda `Android/data/com.alterra.canliceviri/files/rapor.txt` dosyasına yazılır:
+Third-party components keep their own licenses and are not included in this repository (`scripts/kurulum.sh` fetches the sources,
+the app downloads the models):
 
-```bash
-adb shell cat /sdcard/Android/data/com.alterra.canliceviri/files/rapor.txt
-```
-
-## Lisans
-
-Bu depo **PolyForm Noncommercial 1.0.0** lisansıyla yayımlanmıştır (`LICENSE`): kaynak kod herkese açıktır, kişisel, eğitim ve
-araştırma amaçlı kullanılabilir; **ticari kullanım, satış ve ticari dağıtım için yazılı izin gerekir.** Telif hakkı © 2026 Bora Yunusoğlu.
-
-Kullanılan üçüncü taraf bileşenler kendi lisanslarıyla gelir ve bu depoya dahil değildir (`scripts/kurulum.sh` indirir, uygulama modelleri
-ilk açılışta indirir):
-
-| Bileşen | Lisans |
+| Component | License |
 |---|---|
-| [whisper.cpp](https://github.com/ggml-org/whisper.cpp) ve OpenAI Whisper modelleri | MIT |
+| [whisper.cpp](https://github.com/ggml-org/whisper.cpp) and OpenAI Whisper models | MIT |
 | [llama.cpp](https://github.com/ggml-org/llama.cpp) | MIT |
-| [Tencent Hy-MT2](https://huggingface.co/tencent/Hy-MT2-1.8B) çeviri modelleri (1,8B, 7B) | Apache-2.0 |
-| [Silero VAD](https://github.com/snakers4/silero-vad) (whisper.cpp dönüşümü) | MIT |
-| Google Speech Services (sistem seslendirme motoru) | Google'ın kendi koşulları; uygulamaya dahil değil |
+| [Tencent Hy-MT2](https://huggingface.co/tencent/Hy-MT2-1.8B) translation models (1.8B, 7B) | Apache-2.0 |
+| [Silero VAD](https://github.com/snakers4/silero-vad) (whisper.cpp conversion) | MIT |
+| Google Speech Services (system TTS engine) | Google's terms; not bundled |
