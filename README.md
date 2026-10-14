@@ -1,5 +1,7 @@
 # Canlı Çeviri
 
+*Offline live speech translation for Android (Turkish ↔ 18 languages), fully on-device: whisper.cpp + Hy-MT2 (llama.cpp) + system TTS. Source-visible under the PolyForm Noncommercial license; see [Lisans](#lisans).*
+
 Android için internetsiz ve ücretsiz canlı sesli çeviri. Yurt dışında birebir konuşma için:
 
 - Karşı taraf konuşur, Türkçe çeviri **kulaklıktan** gelir.
@@ -107,3 +109,19 @@ Süreler arka planda işlemciyi %100-370 kullanan bir uygulamayla ölçüldü; t
 ```bash
 adb shell cat /sdcard/Android/data/com.alterra.canliceviri/files/rapor.txt
 ```
+
+## Lisans
+
+Bu depo **PolyForm Noncommercial 1.0.0** lisansıyla yayımlanmıştır (`LICENSE`): kaynak kod herkese açıktır, kişisel, eğitim ve
+araştırma amaçlı kullanılabilir; **ticari kullanım, satış ve ticari dağıtım için yazılı izin gerekir.** Telif hakkı © 2026 Bora Yunusoğlu.
+
+Kullanılan üçüncü taraf bileşenler kendi lisanslarıyla gelir ve bu depoya dahil değildir (`scripts/kurulum.sh` indirir, uygulama modelleri
+ilk açılışta indirir):
+
+| Bileşen | Lisans |
+|---|---|
+| [whisper.cpp](https://github.com/ggml-org/whisper.cpp) ve OpenAI Whisper modelleri | MIT |
+| [llama.cpp](https://github.com/ggml-org/llama.cpp) | MIT |
+| [Tencent Hy-MT2](https://huggingface.co/tencent/Hy-MT2-1.8B) çeviri modelleri (1,8B, 7B) | Apache-2.0 |
+| [Silero VAD](https://github.com/snakers4/silero-vad) (whisper.cpp dönüşümü) | MIT |
+| Google Speech Services (sistem seslendirme motoru) | Google'ın kendi koşulları; uygulamaya dahil değil |
