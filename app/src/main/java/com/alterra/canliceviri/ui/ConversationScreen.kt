@@ -1,5 +1,7 @@
 package com.alterra.canliceviri.ui
 
+import com.alterra.canliceviri.BuildConfig
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -156,7 +158,7 @@ private fun Header(vm: ConversationViewModel, status: EngineStatus, onOpenDiagno
                 }
                 DropdownMenuItem(text = { Text("Sorun bildir") }, onClick = { menu = false; onReport() })
                 DropdownMenuItem(text = { Text("Ayarlar") }, onClick = { menu = false; onOpenSettings() })
-                DropdownMenuItem(text = { Text("Cihaz testi") }, onClick = { menu = false; onOpenDiagnostics() })
+                if (BuildConfig.DEBUG) DropdownMenuItem(text = { Text("Cihaz testi") }, onClick = { menu = false; onOpenDiagnostics() })
                 DropdownMenuItem(text = { Text("Konuşmayı temizle") }, onClick = { menu = false; vm.clear() })
             }
         }
@@ -640,7 +642,7 @@ private fun SettingsSheet(vm: ConversationViewModel, onClose: () -> Unit, onFixB
                 "Hoparlör sesi: kulaklık takılıyken ses tuşu kulaklığın sesini ayarlar. Hoparlörün sesini kulaklığı çıkarıp ayarlayın.",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            if (BuildConfig.DEBUG) Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("Geliştirici bilgileri (süreler, dil tespiti, ses seviyeleri)", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
                 Switch(checked = vm.devInfo, onCheckedChange = vm::chooseDevInfo)
             }

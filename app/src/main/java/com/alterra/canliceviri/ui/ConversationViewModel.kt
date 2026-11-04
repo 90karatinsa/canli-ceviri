@@ -1,5 +1,7 @@
 package com.alterra.canliceviri.ui
 
+import com.alterra.canliceviri.BuildConfig
+
 import android.app.Application
 import android.content.Context
 import android.media.AudioManager
@@ -61,7 +63,7 @@ class ConversationViewModel(app: Application) : AndroidViewModel(app) {
     var speechRate by mutableStateOf(prefs.speechRate); private set
     var attachAudio by mutableStateOf(prefs.attachAudio); private set
     var quality by mutableStateOf(prefs.quality); private set
-    var devInfo by mutableStateOf(prefs.devInfo); private set
+    var devInfo by mutableStateOf(BuildConfig.DEBUG && prefs.devInfo); private set
     var readAloud by mutableStateOf(prefs.readAloud); private set
     var enhance by mutableStateOf(prefs.enhance); private set
 
